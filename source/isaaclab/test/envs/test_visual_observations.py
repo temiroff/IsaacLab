@@ -373,3 +373,35 @@ def test_chain_processes_camera_outputs_without_an_observation_manager():
     assert events[-1] == ("close", None)
     with pytest.raises(RuntimeError, match="closed"):
         chain.update()
+
+
+class GraphCapturingCamera(CameraSource):
+    """Records a CUDA graph on the current Warp stream when rendering, like the Newton renderer."""
+
+    def __init__(self, device):
+        self.device = device
+        super().__init__(device)
+
+    @property
+    def render_outputs(self):
+        with wp.ScopedCapture(stream=wp.get_stream(self.device)) as capture:
+            self._outputs["rgb"].warp.fill_(7)
+        wp.capture_launch(capture.graph)
+        return self._outputs
+
+    @render_outputs.setter
+    def render_outputs(self, outputs):
+        self._outputs = outputs
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA graph capture requires a GPU.")
+def test_chain_renders_outside_the_default_torch_stream():
+    """The legacy default Torch stream cannot record CUDA graphs, so rendering must not run on it."""
+    camera = GraphCapturingCamera("cuda:0")
+    cfg, _ = make_term_cfg([], increment=2)
+    chain = CameraPostProcessingChain(
+        camera, cfg.params["processors"], ["rgb"], num_views=2, device="cuda:0", stage=None
+    )
+    assert chain.update()
+    torch.testing.assert_close(chain.outputs["rgb"].torch, torch.full_like(chain.outputs["rgb"].torch, 9))
+    chain.close()

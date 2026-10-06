@@ -122,10 +122,12 @@ class CameraPostProcessingChain:
         """
         if self._pipeline is None:
             raise RuntimeError("Cannot update a closed camera post-processing chain.")
-        # Render, Warp processing, and Torch consumers share a stream. Enter/exit waits also
-        # cover a camera frame rendered outside this chain.
+        # Render on the renderer's own stream: Newton captures CUDA graphs, which the legacy
+        # default Torch stream cannot record. The enter wait orders processing after the render.
+        raw = self._camera.render_outputs
+        # Warp processing and Torch consumers share a stream. Enter/exit waits also cover a
+        # camera frame rendered outside this chain.
         with wp.ScopedStream(self._stream(), sync_enter=True, sync_exit=True):
-            raw = self._camera.render_outputs
             if self._outputs is not None and any(
                 raw.get(name) is not buffer for name, buffer in self._pipeline.render_outputs.items()
             ):
