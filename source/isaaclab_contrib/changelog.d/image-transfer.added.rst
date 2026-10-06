@@ -1,0 +1,1 @@
+* Added application-owned image transfer to camera post-processing chains, with named camera inputs, pluggable control preparation, bounded temporal queues, per-view resets, a depth convenience configuration, and optional sRGB-to-linear conversion.
