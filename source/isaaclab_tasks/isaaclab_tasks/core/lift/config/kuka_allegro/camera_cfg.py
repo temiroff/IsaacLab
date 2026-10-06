@@ -14,6 +14,7 @@ from isaaclab.managers import ObservationTermCfg as ObsTerm
 from isaaclab.managers import SceneEntityCfg
 from isaaclab.sensors import CameraCfg, MultiMeshRayCasterCameraCfg, patterns
 from isaaclab.utils import configclass, replace
+from isaaclab_ppisp import PpispCfg, PpispProcessorCfg
 
 from isaaclab_tasks.utils import PresetCfg, preset
 from isaaclab_tasks.utils.presets import MultiBackendRendererCfg
@@ -222,6 +223,17 @@ def _image_term_presets(sensor_name: str) -> PresetCfg:
                     "channel_first": True,
                 },
             )
+    # Benchmark variant: PPISP post-processing on every RGB preset.
+    for resolution in (64, 128, 256):
+        terms[f"rgb{resolution}"] = ObsTerm(
+            func=base_mdp.processed_image,
+            params={
+                "sensor_cfg": SceneEntityCfg(sensor_name),
+                "processors": [PpispProcessorCfg(isp_cfg=PpispCfg())],
+                "data_type": "rgb",
+                "permute": True,
+            },
+        )
     return preset(default=terms["rgb64"], **terms)
 
 
