@@ -14,6 +14,7 @@ from isaaclab.managers import ObservationTermCfg as ObsTerm
 from isaaclab.managers import SceneEntityCfg
 from isaaclab.sensors import CameraCfg, MultiMeshRayCasterCameraCfg, patterns
 from isaaclab.utils import configclass, replace
+from isaaclab_ppisp import PpispCfg
 
 from isaaclab_tasks.utils import PresetCfg, preset
 from isaaclab_tasks.utils.presets import MultiBackendRendererCfg
@@ -111,9 +112,9 @@ WRIST_RAYCASTER_CAMERA_CFG = MultiMeshRayCasterCameraCfg(
 class BaseTiledCameraCfg(PresetCfg):
     """Base-mounted camera presets, one per data type and resolution."""
 
-    rgb64 = replace(BASE_CAMERA_CFG, data_types=["rgb"], width=64, height=64)
-    rgb128 = replace(BASE_CAMERA_CFG, data_types=["rgb"], width=128, height=128)
-    rgb256 = replace(BASE_CAMERA_CFG, data_types=["rgb"], width=256, height=256)
+    rgb64 = replace(BASE_CAMERA_CFG, data_types=["rgb"], width=64, height=64, isp_cfg=PpispCfg())
+    rgb128 = replace(BASE_CAMERA_CFG, data_types=["rgb"], width=128, height=128, isp_cfg=PpispCfg())
+    rgb256 = replace(BASE_CAMERA_CFG, data_types=["rgb"], width=256, height=256, isp_cfg=PpispCfg())
     depth64 = replace(BASE_CAMERA_CFG, data_types=["depth"], width=64, height=64)
     depth128 = replace(BASE_CAMERA_CFG, data_types=["depth"], width=128, height=128)
     depth256 = replace(BASE_CAMERA_CFG, data_types=["depth"], width=256, height=256)
@@ -155,9 +156,9 @@ class BaseTiledCameraCfg(PresetCfg):
 class WristTiledCameraCfg(PresetCfg):
     """Wrist-mounted camera presets, one per data type and resolution."""
 
-    rgb64 = replace(WRIST_CAMERA_CFG, data_types=["rgb"], width=64, height=64)
-    rgb128 = replace(WRIST_CAMERA_CFG, data_types=["rgb"], width=128, height=128)
-    rgb256 = replace(WRIST_CAMERA_CFG, data_types=["rgb"], width=256, height=256)
+    rgb64 = replace(WRIST_CAMERA_CFG, data_types=["rgb"], width=64, height=64, isp_cfg=PpispCfg())
+    rgb128 = replace(WRIST_CAMERA_CFG, data_types=["rgb"], width=128, height=128, isp_cfg=PpispCfg())
+    rgb256 = replace(WRIST_CAMERA_CFG, data_types=["rgb"], width=256, height=256, isp_cfg=PpispCfg())
     depth64 = replace(WRIST_CAMERA_CFG, data_types=["depth"], width=64, height=64)
     depth128 = replace(WRIST_CAMERA_CFG, data_types=["depth"], width=128, height=128)
     depth256 = replace(WRIST_CAMERA_CFG, data_types=["depth"], width=256, height=256)
