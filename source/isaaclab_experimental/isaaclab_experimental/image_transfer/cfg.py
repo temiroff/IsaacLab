@@ -3,7 +3,7 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
-"""Configuration for application-owned image generation applied as a modifier."""
+"""Configuration for image transfer: the camera modifier and the worker-process model."""
 
 from __future__ import annotations
 
@@ -16,6 +16,7 @@ from isaaclab.utils.modifiers import ModifierCfg
 
 if TYPE_CHECKING:
     from .modifier import ImageTransferModifier
+    from .worker import WorkerModel
 
 
 @configclass
@@ -63,3 +64,43 @@ class ImageTransferModifierCfg(ModifierCfg):
 
     output: str = "rgb"
     """Camera output produced from the controls."""
+
+
+@configclass
+class WorkerModelCfg(BackendCfg):
+    """Image transfer model served by a worker process; see :mod:`.worker` for the protocol.
+
+    Use it when the model needs its own Python environment, GPU or machine. The camera starts the worker
+    through :attr:`command` (locally, or over SSH) when it first needs an image, sends the settings below,
+    and stops the worker when the camera closes. A worker serves one camera view.
+    """
+
+    class_type: type[WorkerModel] | str = "{DIR}.worker:WorkerModel"
+    """Worker model class."""
+
+    command: list[str] = []
+    """Argv that starts the worker, for example ``["python3", "/path/to/worker.py"]``."""
+
+    prompt: str | None = None
+    """Text description of the images to generate. Defaults to None, which uses the worker's default."""
+
+    control: str | None = None
+    """Control type the camera chain prepares, for example ``"edge"`` or ``"depth"``, so the worker can
+    select its matching model. Defaults to None, which uses the worker's default."""
+
+    max_episode_frames: int | None = None
+    """Longest episode in camera frames; environments must reset before it. Defaults to None, which uses
+    the worker's default."""
+
+    max_chunks: int | None = None
+    """Model calls allowed over the stream's lifetime, across episodes. Defaults to None, which uses the
+    worker's default."""
+
+    log_path: str | None = None
+    """File receiving the worker's log. Defaults to None, which forwards it to this process's stderr."""
+
+    record_dir: str | None = None
+    """New directory receiving every generated chunk as ``.npy``. Defaults to None, which records nothing."""
+
+    timeout_s: float = 600.0
+    """Longest wait for one chunk [s], including model start-up for the first chunk."""

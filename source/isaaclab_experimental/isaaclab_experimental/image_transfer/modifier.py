@@ -3,11 +3,10 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
-"""Image generation from per-view control sequences, applied as a modifier."""
+"""Image transfer modifier: image generation from per-view control sequences."""
 
 from __future__ import annotations
 
-import math
 from collections.abc import Sequence
 from typing import TYPE_CHECKING
 
@@ -18,8 +17,8 @@ from isaaclab.utils import instantiate
 from isaaclab.utils.modifiers import ModifierBase
 
 if TYPE_CHECKING:
-    from .backend import ImageTransferModel
-    from .modifier_cfg import ImageTransferModifierCfg
+    from .cfg import ImageTransferModifierCfg
+    from .model import ImageTransferModel
 
 _SEED_MODULUS = 2**31
 
@@ -148,44 +147,6 @@ class ImageTransferModifier(ModifierBase):
         finally:
             if self._owned_model is not None:
                 self._owned_model.close()
-
-
-def depth_to_control(data: torch.Tensor, near: float = 0.1, far: float = 10.0) -> torch.Tensor:
-    """Map metric depth to uint8 three-channel controls.
-
-    Hits at ``near`` become white and hits at ``far`` black. Missing, nonfinite, and nonpositive
-    depth becomes black.
-
-    Args:
-        data: Depth [m] of shape ``(N, H, W, 1)``.
-        near: White depth endpoint [m].
-        far: Black depth endpoint [m].
-
-    Returns:
-        Controls of shape ``(N, H, W, 3)``, dtype uint8.
-    """
-    if not (math.isfinite(near) and math.isfinite(far) and 0 < near < far):
-        raise ValueError("Depth bounds must be finite and satisfy 0 < near < far.")
-    valid = torch.isfinite(data) & (data > 0)
-    metric = torch.where(valid, data, far)
-    pixels = ((far - metric) / (far - near)).clamp(0, 1).mul(255).round().to(torch.uint8)
-    return pixels.expand(*pixels.shape[:-1], 3)
-
-
-def srgb_to_linear(data: torch.Tensor) -> torch.Tensor:
-    """Approximate scene-linear color from display sRGB, for example before PPISP.
-
-    The inverse sRGB transfer function does not recover scene HDR, exposure, or a baked camera
-    response. Use the renderer's ``rgb_radiance`` for calibrated camera processing.
-
-    Args:
-        data: sRGB of shape ``(N, H, W, 3)``, dtype uint8.
-
-    Returns:
-        Linear color of shape ``(N, H, W, 3)``, dtype float32.
-    """
-    value = data.to(torch.float32) / 255.0
-    return torch.where(value > 0.04045, ((value + 0.055) / 1.055) ** 2.4, value / 12.92)
 
 
 def _validate(cfg: ImageTransferModifierCfg, data_dim: tuple[int, ...]) -> None:
