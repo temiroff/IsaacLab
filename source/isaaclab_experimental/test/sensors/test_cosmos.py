@@ -31,6 +31,7 @@ import pytest
 import torch
 from isaaclab_experimental.cosmos import CosmosModelCfg, CosmosTransferModifierCfg, _protocol
 from isaaclab_experimental.cosmos.client import CosmosModel
+from isaaclab_experimental.cosmos.client import cosmos_model as cosmos_model_module
 from isaaclab_experimental.cosmos.client.camera import service_capabilities
 from isaaclab_experimental.cosmos.client.cosmos_model import split_views
 from isaaclab_experimental.cosmos.server import serve
@@ -427,6 +428,111 @@ def test_camera_postprocessing_publishes_rgb_from_the_connected_service(cosmos_s
     assert not cosmos_service.resource.closed.is_set()
 
 
+class LazyCamera:
+    """A scene camera that captures when its data is read, and only once per simulation step."""
+
+    def __init__(self, cfg, value):
+        self.chain = ModifierChain([CosmosTransferModifierCfg(backend=cfg)], device="cpu", sensor=self)
+        self.value = value
+        self.due = False
+        self.output = None
+
+    @property
+    def data(self):
+        if self.due:
+            self.due = False
+            self.output = self.chain(torch.full((2, 2, 3, 3), self.value, dtype=torch.uint8))
+        return self.output
+
+
+def _camera_group(cosmos_service, monkeypatch):
+    """A front and a wrist camera of two environments, sharing one session through their simulation's model."""
+    cfg = CosmosModelCfg(
+        max_episode_frames=13,
+        endpoint=cosmos_service.endpoint,
+        prompt=["Front 0.", "Front 1.", "Wrist 0.", "Wrist 1."],
+        modality="edge",
+        timeout=2,
+        cameras=("front", "wrist"),
+    )
+    model = CosmosModel(cfg)
+    sim = SimpleNamespace(get_or_create_backend=lambda backend: model)
+    monkeypatch.setattr(modifier_module, "SimulationContext", SimpleNamespace(instance=lambda: sim))
+    cameras = {"front": LazyCamera(cfg, 10), "wrist": LazyCamera(cfg, 20)}
+    monkeypatch.setattr(cosmos_model_module, "_scene_cameras", lambda: cameras)
+
+    def echo(stream, controls, reset_rows, seeds, **episode):
+        stream.steps.append((controls, reset_rows, seeds))
+        return [control.copy() for control in controls]
+
+    # The service echoes each view's control, so every camera can be checked for its own views.
+    monkeypatch.setattr(TransportStream, "step", echo)
+    return model, cameras
+
+
+def test_cameras_sharing_a_session_generate_all_their_views_in_one_batch(cosmos_service, monkeypatch):
+    """Whichever camera completes its chunk first updates the other; one 4-view step serves both cameras."""
+    model, cameras = _camera_group(cosmos_service, monkeypatch)
+    front, wrist = cameras["front"], cameras["wrist"]
+
+    def capture(*order):
+        front.due = wrist.due = True
+        for camera in order:
+            camera.data
+        front.value, wrist.value = front.value + 1, wrist.value + 1
+
+    try:
+        # The front camera completes the initial chunk first, the wrist camera the update.
+        capture(front, wrist)
+        for _ in range(4):
+            capture(wrist, front)
+        assert front.output[:, 0, 0, 0].tolist() == [14, 14] and wrist.output[:, 0, 0, 0].tolist() == [24, 24]
+        # Environment 1 resets on both cameras and restarts with its newest control.
+        for camera in (front, wrist):
+            camera.chain.reset([1])
+        for _ in range(4):
+            capture(front, wrist)
+        assert front.output[:, 0, 0, 0].tolist() == [18, 18] and wrist.output[:, 0, 0, 0].tolist() == [28, 28]
+    finally:
+        model.close()
+
+    assert len(cosmos_service.resource.streams) == 1
+    session = cosmos_service.resource.streams[0]
+    assert session.settings["num_views"] == 4
+    assert session.settings["prompt"] == ["Front 0.", "Front 1.", "Wrist 0.", "Wrist 1."]
+    # A camera's view takes its environment's seed, and an environment's reset restarts it on every camera.
+    seed = CosmosTransferModifierCfg().seed
+    assert session.settings["seeds"] == (seed, seed + 1, seed, seed + 1)
+    assert [len(controls) for controls, _, _ in session.steps] == [4, 4, 4]
+    assert [int(control[0, 0, 0, 0]) for control in session.steps[0][0]] == [10, 10, 20, 20]
+    assert [control.shape[0] for control in session.steps[2][0]] == [4, 1, 4, 1]
+    assert session.steps[2][1:] == ((1, 3), (seed + 3, seed + 3))
+    assert session.closed.wait(2)
+
+
+def test_a_camera_that_misses_a_shared_capture_fails_the_session_for_every_camera(cosmos_service, monkeypatch):
+    model, cameras = _camera_group(cosmos_service, monkeypatch)
+    front, wrist = cameras["front"], cameras["wrist"]
+    try:
+        front.due = wrist.due = True
+        front.data
+        for _ in range(3):
+            front.due = True
+            front.data
+        front.due = True
+        with pytest.raises(RuntimeError, match="'wrist' did not capture with the other cameras"):
+            front.data
+        for _ in range(3):
+            wrist.due = True
+            wrist.data
+        wrist.due = True
+        with pytest.raises(RuntimeError, match="shared by these cameras is closed or failed"):
+            wrist.data
+    finally:
+        model.close()
+    assert cosmos_service.resource.streams[0].closed.wait(2)
+
+
 def test_incompatible_cosmos_cadence_is_rejected_before_opening_a_session(cosmos_service, monkeypatch):
     """A generic one-frame update must not open a Cosmos session that cannot consume it."""
     monkeypatch.setattr(modifier_module, "SimulationContext", SimpleNamespace(instance=lambda: None))
@@ -603,8 +709,11 @@ def test_the_camera_frees_its_control_buffer_only_after_the_service_releases_it(
     assert released == ["output", ("control", failure is None)]
 
 
-def test_after_a_failure_the_service_frees_its_output_buffer_only_once_the_camera_disconnects(monkeypatch):
-    """The camera may have the output buffer open until it handles the error and disconnects."""
+@pytest.mark.parametrize("end,freed", [("disconnect", True), ("idle", False), ("shutdown", False)])
+def test_after_a_failure_the_service_frees_its_output_buffer_only_once_the_camera_disconnects(monkeypatch, end, freed):
+    """The camera may have the output buffer open until it handles the error and disconnects. An idle timeout or the
+    service's own shutdown ends the connection without that confirmation, so the buffer stays until the service exits.
+    """
     from isaaclab_experimental.cosmos.server import service
 
     released = []
@@ -616,9 +725,9 @@ def test_after_a_failure_the_service_frees_its_output_buffer_only_once_the_camer
             if "control" not in released:
                 released.append("control")
 
-        def close(self):
+        def close(self, *, peer_released=True):
             self.close_opened()
-            released.append("output")
+            released.append("output freed" if peer_released else "output kept")
 
     def fail(*args):
         raise RuntimeError("generation failed")
@@ -628,6 +737,8 @@ def test_after_a_failure_the_service_frees_its_output_buffer_only_once_the_camer
     state = service._ServiceState(TransportResource())
     state.transports = ["socket", "cuda_ipc"]
     camera, connection = socket.socketpair()
+    if end == "idle":
+        connection.settimeout(0.5)
     handler = threading.Thread(
         target=service._handle_connection, args=(connection, state, {connection}, threading.Lock())
     )
@@ -657,12 +768,20 @@ def test_after_a_failure_the_service_frees_its_output_buffer_only_once_the_camer
         while state.owner is not None and time.monotonic() < deadline:
             time.sleep(0.01)
         # The session ended and the camera's controls are released, but the output buffer waits for the camera.
-        assert state.owner is None and released == ["control"] and handler.is_alive()
+        assert state.owner is None and released[0] == "control"
+        if end != "idle":
+            assert released == ["control"] and handler.is_alive()
+        if end == "shutdown":
+            state.stopping.set()
+            connection.shutdown(socket.SHUT_RDWR)
+        if end != "disconnect":
+            # The camera stays connected until the service has handled the timeout or shutdown.
+            handler.join(timeout=5)
     finally:
         camera.close()
         handler.join(timeout=5)
         state.executor.shutdown()
-    assert not handler.is_alive() and released == ["control", "output"]
+    assert not handler.is_alive() and released == ["control", "output freed" if freed else "output kept"]
 
 
 def test_cuda_ipc_handles_keep_all_64_bytes_including_zero_bytes():
@@ -997,3 +1116,27 @@ def test_a_unix_socket_service_is_private_replaces_a_stale_socket_and_refuses_a_
         thread.join(timeout=5)
         shutil.rmtree(directory, ignore_errors=True)
     assert not thread.is_alive() and not os.path.exists(path)
+
+
+@_UNIX
+def test_a_stopping_service_removes_its_socket_file_but_not_a_replacement():
+    """A service that took over the endpoint's path keeps its socket file when the earlier service stops."""
+    endpoint, directory = _unix_endpoint()
+    path = endpoint[len("unix://") :]
+    moved = f"unix://{directory}/moved.sock"
+    thread = threading.Thread(target=serve, args=(TransportResource(), endpoint), daemon=True)
+    thread.start()
+    try:
+        deadline = time.monotonic() + 5
+        while not os.path.exists(path):
+            if time.monotonic() >= deadline:
+                pytest.fail("Cosmos service did not create its socket")
+            time.sleep(0.01)
+        os.rename(path, moved[len("unix://") :])
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as replacement:
+            replacement.bind(path)
+            _protocol.request(moved, {"op": "shutdown"}, timeout=2)
+            thread.join(timeout=5)
+            assert not thread.is_alive() and os.path.exists(path)
+    finally:
+        shutil.rmtree(directory, ignore_errors=True)

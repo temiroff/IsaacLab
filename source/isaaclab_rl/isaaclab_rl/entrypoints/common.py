@@ -210,7 +210,12 @@ def add_cosmos_args(parser: argparse.ArgumentParser) -> None:
             " file."
         ),
     )
-    group.add_argument("--cosmos_camera", default=None, help="Scene camera name; defaults to the only rgb camera.")
+    group.add_argument(
+        "--cosmos_camera",
+        action="append",
+        default=None,
+        help="Scene camera name; repeat, or pass all, for cameras sharing one session. Defaults to the only rgb one.",
+    )
     group.add_argument(
         "--cosmos_control",
         choices=["depth", "edge", "blur"],
@@ -430,11 +435,12 @@ def apply_env_overrides(args_cli: argparse.Namespace, env_cfg: Any) -> None:
             if prompts is not None:
                 raise ValueError("Pass Cosmos prompts with --cosmos_prompt or --cosmos_prompt_file, not both.")
             prompts = read_prompt_files(args_cli.cosmos_prompt_file)
+        cameras = args_cli.cosmos_camera or (preset_cameras[:1] if len(preset_cameras) == 1 else None)
         endpoints = args_cli.cosmos_endpoint
         apply_cosmos(
             env_cfg,
             prompt=prompts[0] if prompts and len(prompts) == 1 else prompts,
-            camera=args_cli.cosmos_camera or (preset_cameras[0] if len(preset_cameras) == 1 else None),
+            camera=cameras[0] if cameras and len(cameras) == 1 else cameras,
             control=args_cli.cosmos_control,
             near=args_cli.cosmos_near,
             far=args_cli.cosmos_far,
