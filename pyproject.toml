@@ -108,6 +108,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+agile = ["pyzmq==27.0.1"]
 
 tetrahedralization = ["pytetwild[all]>=0.3.0,<0.4"]
 

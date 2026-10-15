@@ -32,3 +32,28 @@ class CosmosTransferModifierCfg(ImageTransferModifierCfg):
 
     seed: int = 42
     """Initial generation seed; full camera resets advance it deterministically."""
+
+    decision_interval: int = 1
+    """Single-frame inference opportunities every N camera captures, starting at reset (e.g. 16)."""
+
+    augmentation_probability: float = 1.0
+    """Probability of inference at a single-frame decision point; otherwise publish current raw RGB.
+
+    One draw applies to the camera batch. Shared cameras must use identical scheduling settings.
+    """
+
+    max_capture_gap_s: float = 0.05
+    """Largest simulated time between two camera captures that is expected to give a clean generated video [s].
+
+    A warning is logged once when the captures Cosmos receives are further apart, which usually means the camera's
+    ``update_period`` (or the environment step) is too long. A 0.033 s gap (30 Hz) stayed clean; 0.133 s did not.
+    """
+
+    depth_near: float = 0.1
+    """Single-frame depth control's white endpoint [m]."""
+
+    depth_far: float = 2.0
+    """Single-frame depth control's black endpoint [m]."""
+
+    edge_thresholds: tuple[int, int] = (100, 200)
+    """Single-frame Canny thresholds."""

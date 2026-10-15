@@ -11,21 +11,24 @@ import argparse
 import json
 import sys
 
-from isaaclab_experimental.cosmos._protocol import request
-
-DEFAULT_ENDPOINT = "tcp://127.0.0.1:5555"
+from isaaclab_experimental.cosmos._protocol import DEFAULT_ENDPOINT, request
 
 
 def main(args: list[str] | None = None) -> int:
     """Run the ``isaaclab cosmos status`` command."""
     parser = argparse.ArgumentParser(description=__doc__, prog="isaaclab cosmos")
     commands = parser.add_subparsers(dest="command", required=True)
-    status = commands.add_parser("status", help="Inspect the service.")
-    status.add_argument("--endpoint", default=DEFAULT_ENDPOINT)
-    status.add_argument("--timeout", type=float, default=5.0, help="Connection and response timeout [s].")
+    for name, help_text in (
+        ("status", "Inspect the service."),
+        ("offload", "Move idle model weights to CPU between rollouts."),
+        ("activate", "Restore model weights to the service GPU."),
+    ):
+        command = commands.add_parser(name, help=help_text)
+        command.add_argument("--endpoint", default=DEFAULT_ENDPOINT, help="Cosmos service endpoint.")
+        command.add_argument("--timeout", type=float, default=600.0, help="Operation timeout [s].")
     options = parser.parse_args(args)
     try:
-        reply, _ = request(options.endpoint, {"op": "status"}, timeout=options.timeout)
+        reply, _ = request(options.endpoint, {"op": options.command}, timeout=options.timeout)
         print(json.dumps(reply, indent=2))
         return 0
     except (OSError, ValueError, RuntimeError) as error:

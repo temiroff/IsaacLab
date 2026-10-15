@@ -121,6 +121,8 @@ class RegionalEdgeControlCfg(ModifierCfg):
 
 def _check_modality(backend: CosmosModelCfg, modality: str) -> None:
     """Reject a model configured for another control type than the chain prepares."""
+    if backend.generation_mode == "single_frame" and modality != "blur":
+        raise ValueError("Use cosmos_camera for single-frame control preparation and current-RGB fallback.")
     configured = backend.modality
     if configured != modality:
         raise ValueError(f"This chain prepares {modality} controls, but the model is set to modality={configured!r}.")
@@ -135,6 +137,16 @@ def edge_processor(
         raise ValueError("Edge thresholds must satisfy 0 <= lower < upper.")
     control = ModifierCfg(func=edge_control, params={"lower": lower, "upper": upper})
     return "rgb", [control, CosmosTransferModifierCfg(backend=backend, **cosmos)]
+
+
+def blur_processor(backend: CosmosModelCfg, **cosmos: Any) -> tuple[str, list[ModifierCfg]]:
+    """Blur-guided Cosmos chain on the camera's ``rgb`` output.
+
+    The camera sends its RGB unchanged; the service blurs it with the Framework's own filter, so the control matches
+    the model's training data.
+    """
+    _check_modality(backend, "blur")
+    return "rgb", [CosmosTransferModifierCfg(backend=backend, **cosmos)]
 
 
 def segmentation_processor(

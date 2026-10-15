@@ -14,7 +14,8 @@ the server does not import the camera client.
 
 Cosmos Framework also provides a native [Ray serving interface](https://github.com/NVIDIA/cosmos-framework/blob/main/docs/faq.md#q-how-do-i-run-online-inference-with-ray).
 That service accepts HTTP generation requests and returns output files. The server
-below supplies the incremental TCP camera interface used by this integration.
+below supplies the incremental camera interface used by this integration, over a Unix socket on the same
+machine or TCP from another machine.
 
 ## Prerequisites and paths
 
@@ -104,21 +105,40 @@ uv run --no-sync isaaclab-cosmos-server \
   --warmup
 ```
 
-Wait for `Cosmos ready at tcp://127.0.0.1:5555`, then leave this terminal running.
-The worker loads the model once on `cuda:0` and exposes the endpoint after model
-loading and warmup. Isaac Lab can then connect from its own environment.
+Wait for `Cosmos ready at unix:///tmp/isaaclab-cosmos-<uid>.sock`, then leave this terminal running. The
+server listens on that Unix socket, which only your user can open; it opens no network port.
+The worker reserves the endpoint before loading the model once on `cuda:0`, so a conflicting endpoint
+fails immediately. It accepts requests after model loading and warmup; wait for the ready message before
+connecting from Isaac Lab's environment.
+
+The server sets no episode length limit: each task requests its own frame budget when it opens a session. See
+[Episode frame budget](cosmos.md#episode-frame-budget).
+
+Isaac Lab requests the camera count when it opens a session; no server-side view count is needed. Close the
+session before starting another with a different count. Each view needs GPU memory for its own generation
+history, and resetting environments independently needs the compiled path. See
+[Several environments](cosmos.md#several-environments).
+
+`--kv-window N` and `--attention-sink M` set the generation history the model attends to, in latent frames
+(four video frames each). The defaults, 30 and 3, follow the Sim-Transfer recipe. A shorter window is faster and
+needs less memory, especially with several environments, but remembers less of each episode.
 
 `--no-compile` selects eager inference. Omit it to enable the compiled CUDA-graph
-path, which can take additional time on its first use. `--warmup` runs a disposable
-33-frame session on a `(480, 832)` canvas before reporting readiness. With compiled
-inference, other canvases or prompts can still require compilation on their first
-use. Omit `--warmup` to expose the endpoint after model loading.
+path, which can take additional time on its first use. `--warmup` runs a disposable one-view session through the
+full history window (`1 + 4 * --kv-window` frames, 121 by default) before reporting
+readiness. No camera has connected yet, so the server warms the recipe's default `(480, 832)` canvas; cameras
+choose their canvas when they connect. With compiled inference, a session with another canvas, view count, or
+prompt compiles again on its first step, while the warmup's compiled state keeps its GPU memory. Use `--warmup`
+for one camera on the `(480, 832)` canvas; otherwise omit it to accept requests after model loading.
 
 The equivalent module entrypoint is
 `uv run --no-sync python -m isaaclab_experimental.cosmos.server.worker` with the same
-arguments. Use `--device cuda:1` for another GPU, `--port 5556` for another port, or
-`--host` to choose the listening interface. Match that endpoint in the camera
-configuration.
+arguments. Use `--device cuda:1` for another GPU; keep the simulator's GPU visible to the service so images still
+move between the GPUs directly (see [Cosmos on another GPU](cosmos.md#cosmos-on-another-gpu)). Use
+`--endpoint unix:///path/to/socket` or `--endpoint tcp://127.0.0.1:5556` for another endpoint, for example TCP for
+Isaac Lab on another machine through an SSH tunnel (see [Endpoints and transports](cosmos.md#endpoints-and-transports)).
+Match that endpoint in the camera configuration. Several services, each with its own `--device` and `--endpoint`,
+can split one camera's environments across GPUs (see [Several GPUs](cosmos.md#several-gpus)).
 
 ## Connect Isaac Lab
 
@@ -130,10 +150,10 @@ uv run isaaclab cosmos status
 ```
 
 A ready service reports `"ready": true`. Before connecting a camera, check that
-`"session_active": false`: the current server supports one camera view and one
-active generation session. If a session is active, close that camera or Isaac Lab
+`"session_active": false`: the server runs one active generation session with the
+camera count requested by Isaac Lab. If a session is active, close that camera or Isaac Lab
 process before connecting another. For another endpoint, pass
-`--endpoint tcp://127.0.0.1:5556` to the status command.
+the same `--endpoint` to the status command.
 
 Run the camera task or training command from [Cosmos camera integration](cosmos.md).
 Resetting or closing the camera clears its generation history while keeping the
@@ -143,3 +163,72 @@ model loaded. Closing Isaac Lab leaves the service running for the next command.
 
 Press Ctrl+C in the Cosmos server terminal to stop the service and release the
 model.
+
+## Independent-frame generation for RL
+
+AR remains the default: one bootstrap image followed by four-frame chunks, with a
+30-latent KV history window by default. Select `generation_mode="single_frame"` in
+`CosmosModelCfg` to generate an independent current image at each inference call.
+Each call closes its bootstrap generation and discards temporal KV/VAE state.
+Use an eager server (`--no-compile --kv-window 1 --attention-sink 0`) for this
+workload to avoid compiling a new generation repeatedly.
+
+Configure an ordinary RGB camera through `cosmos_camera` or `apply_cosmos`:
+
+```python
+apply_cosmos(
+    env_cfg,
+    camera="policy_camera",
+    prompt=["A red apple on grey cloth.", "A green apple on grey cloth."],
+    generation_mode="single_frame",
+    decision_interval=16,
+    augmentation_probability=0.5,
+    num_envs=env_cfg.scene.num_envs,
+)
+```
+
+The interval counts **camera captures**, not physics substeps or policy actions.
+For a 16-action VLA chunk, use 16 only when the camera captures once per action;
+if it captures only at policy decisions, use 1. The first capture after reset is
+a decision point. One seeded probability draw applies to the whole camera batch;
+shared cameras need the same scheduling settings and capture/reset cadence.
+At skipped decisions and between decisions the output is the **current raw RGB**,
+not a cached generated frame or a black reset placeholder. Depth controls read
+raw depth from the same capture while preserving raw RGB for this fallback.
+
+Single-frame sessions cycle the prompt list independently for each reset view:
+view `v`, episode `k` selects `prompt[(v + k) % len(prompt)]`. Continuing views
+keep their prompts. AR behavior is unchanged: batched AR prompts remain fixed;
+use a single-view AR session to cycle prompts between episodes.
+
+## Releasing model memory between rollout and learning
+
+Pause camera captures during policy updates. In single-frame mode, the owning
+`CosmosModel` can keep its sessions open:
+
+```python
+model.offload()
+# Perform the policy update while Cosmos weights are on CPU.
+model.activate()
+# Resume captures through the same camera streams.
+```
+
+AR sessions retain temporal GPU state and must be closed before offloading.
+The model methods use the owning connection and serialize residency changes with
+generation. Another connection cannot offload a live session. For idle services,
+the CLI provides the same operations:
+
+```bash
+isaaclab cosmos offload --endpoint unix:///tmp/isaaclab-cosmos.sock
+isaaclab cosmos activate --endpoint unix:///tmp/isaaclab-cosmos.sock
+```
+
+For multiple services, the model methods operate in endpoint order; an error
+leaves earlier services in their new state, which `status` can inspect.
+
+The server process stays running. Activation restores weights to its original
+GPU; reopen closed AR streams or resume existing single-frame streams. Offload also invalidates
+compiled graphs, so compiled inference can require recompilation after activation.
+`isaaclab cosmos status` reports `model_active` separately from session ownership.
+CPU RAM must accommodate the weights. Foreground compositing and mask-guided
+generation are outside this change.

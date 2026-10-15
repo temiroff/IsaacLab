@@ -1,0 +1,1 @@
+* Add a capture-gap check to the Cosmos camera modifier: it measures the simulated time between captures, warns once when it exceeds ``max_capture_gap_s`` (default 0.05 s), and exposes ``capture_gap_s``. Document how to choose the camera ``update_period``.

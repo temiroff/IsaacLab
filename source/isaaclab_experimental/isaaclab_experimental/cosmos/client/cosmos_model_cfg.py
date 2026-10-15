@@ -7,13 +7,38 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Literal
+import math
+from typing import TYPE_CHECKING, Any, Literal
 
 from isaaclab.sim import BackendCfg
 from isaaclab.utils import configclass
 
+from .._protocol import DEFAULT_ENDPOINT
+
 if TYPE_CHECKING:
     from .cosmos_model import CosmosModel
+
+
+def episode_frame_budget(env_cfg: Any, update_period: float) -> tuple[int, int, int]:
+    """Count a camera's captures per episode and the Cosmos frame budget that holds them.
+
+    The episode lasts ``ceil(episode_length_s / step_dt)`` environment steps, as the environment counts them. The
+    camera captures at most once per step, once its elapsed time reaches ``update_period - 1e-6`` [s], the
+    threshold :class:`~isaaclab.sensors.SensorBase` uses.
+
+    Args:
+        env_cfg: Environment configuration with ``sim.dt``, ``decimation``, and ``episode_length_s``.
+        update_period: Camera update period [s]. Zero captures every step.
+
+    Returns:
+        Environment steps per capture, captures per episode including the initial capture, and the smallest
+        frame budget ``1 + 4*k`` that holds them.
+    """
+    step_dt = env_cfg.sim.dt * env_cfg.decimation
+    episode_steps = math.ceil(env_cfg.episode_length_s / step_dt)
+    steps_per_capture = max(1, math.ceil((update_period - 1e-6) / step_dt))
+    captures = math.ceil(episode_steps / steps_per_capture) + 1
+    return steps_per_capture, captures, 1 + 4 * math.ceil((captures - 1) / 4)
 
 
 @configclass
@@ -28,17 +53,56 @@ class CosmosModelCfg(BackendCfg):
     class_type: type[CosmosModel] | str = "{DIR}.cosmos_model:CosmosModel"
     """Client resource constructor. The model framework runs in the service's environment."""
 
-    endpoint: str = "tcp://127.0.0.1:5555"
-    """Endpoint of the independently started Cosmos service."""
+    endpoint: str | list[str] = DEFAULT_ENDPOINT
+    """Endpoint of the independently started Cosmos service: ``unix:///path`` on the same machine, or
+    ``tcp://host:port``. Defaults to the service's default, a Unix socket private to this user on Linux and
+    ``tcp://127.0.0.1:5555`` on Windows.
 
-    prompt: str | None = None
-    """Appearance prompt. None omits an appearance description."""
+    A list names several services, for example one per GPU. The camera's views are then split into contiguous
+    shares of near-equal size, one per service in list order; each service generates its share as one batch, all
+    services at the same time. Each view stays on its service, which keeps its generation history."""
 
-    modality: Literal["edge", "depth", "seg"] = "edge"
-    """Type of uint8 three-channel guidance prepared by the preceding camera modifier."""
+    prompt: str | list[str] | None = None
+    """Appearance prompt. A string applies to every episode. A list varies the appearance, for visual
+    randomization. With one view, episode ``k`` of the camera stream uses ``prompt[k % len(prompt)]``; an episode
+    reset before the first generated update (for example the environment's initial reset right after its first
+    capture) keeps the current prompt. With several views (environments), view ``v`` uses
+    ``prompt[v % len(prompt)]`` for all its episodes, because a batched session keeps each view's prompt across
+    resets. In single-frame mode, each reset advances only that view's prompt-list index, including
+    batched sessions. None omits an appearance description."""
 
-    max_episode_frames: int = 201
-    """Image-frame budget per episode, including the initial frame."""
+    cameras: tuple[str, ...] = ()
+    """Scene names of the cameras that share one session, each configured with this model. Defaults to none, which
+    gives each camera its own session. With several, every capture generates all their environments as one batch:
+    camera ``k``'s environment ``v`` is view ``k * num_envs + v``, which selects its prompt as above; a camera's view
+    takes its environment's seed, so all cameras of an environment share it. Views of different cameras are generated
+    independently and need not agree with each other. The cameras need the same canvas, control type, and capture
+    rate; :func:`~isaaclab_experimental.cosmos.apply_cosmos` sets them up."""
+
+    generation_mode: Literal["autoregressive", "single_frame"] = "autoregressive"
+    """Temporal AR chunks (default), or independent current images with no retained generation history."""
+
+    modality: Literal["edge", "blur", "depth", "seg"] = "depth"
+    """Type of uint8 three-channel guidance. The preceding camera modifier prepares edge, depth, and seg controls;
+    for blur the camera sends its RGB and the service applies the Framework's own blur filter."""
+
+    max_episode_frames: int | None = None
+    """Image-frame budget per episode, including the initial frame: ``1 + 4*k``. ``apply_cosmos`` and the
+    Shadow Hand presets derive it from the task duration and capture rate with :func:`episode_frame_budget`.
+    Low-level callers must set it before creating the client. The service tells the model the episode's duration
+    from it and rejects frames beyond it.
+    """
+
+    transport: Literal["auto", "cuda_ipc", "socket"] = "auto"
+    """How images move between the camera and the service. ``"cuda_ipc"`` keeps them on the GPU through shared
+    device memory and interprocess events, with no host copies for the transfer; it needs the service on the same
+    Linux machine, on the camera's GPU or on another GPU that both processes can see and that can access the
+    camera's GPU directly (NVLink or PCIe peer access). The service synchronizes its CUDA stream before replying to
+    report GPU faults. Control preprocessing can still use the CPU: edge extraction in the camera process and blur
+    filtering in the service copy images to the CPU and back. ``"socket"`` sends images through host memory in the
+    endpoint's messages, which also works across machines. ``"auto"`` (default) uses CUDA IPC when the service
+    supports it, runs on this machine, and its GPU qualifies, and the socket otherwise. The endpoint carries the
+    small step messages in both cases."""
 
     timeout: float = 600.0
     """Maximum wait per network operation [s], including the first generation."""
