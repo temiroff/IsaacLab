@@ -87,26 +87,6 @@ def test_native_fabric_geometry_needs_no_separate_publication(monkeypatch):
     provider.get_geometry_points.assert_not_called()
 
 
-def test_renderer_marks_rtx_sensor_rendering_when_created(monkeypatch):
-    """Creating the renderer, which cameras do during scene construction, marks RTX sensor rendering."""
-    _install_omni_stubs(monkeypatch)
-    import isaaclab_physx.renderers.isaac_rtx_renderer as rtx_renderer
-    from isaaclab_physx.renderers.isaac_rtx_renderer_cfg import IsaacRtxRendererCfg
-
-    settings = MagicMock()
-    settings.get.return_value = False
-    with (
-        patch.object(rtx_renderer, "get_settings_manager", return_value=settings),
-        patch.object(rtx_renderer, "enable_extension"),
-        patch.object(rtx_renderer, "apply_isaac_rtx_global_settings"),
-        patch.object(rtx_renderer, "ensure_rtx_hydra_engine_attached"),
-    ):
-        rtx_renderer.IsaacRtxRenderer(IsaacRtxRendererCfg())
-
-    settings.set.assert_any_call("/isaaclab/render/rtx_sensors", True)
-    settings.set.assert_any_call("/physics/fabricUpdateTransformations", True)
-
-
 @pytest.mark.parametrize(
     ("data_types", "isp_cfg", "routes_hdr"),
     [(["rgb"], None, False), (["rgb_hdr"], None, True), (["rgb_radiance"], None, True), (["rgb"], object(), True)],
@@ -128,29 +108,44 @@ def test_prepare_cameras_routes_gaussian_hdr_for_hdr_cameras(monkeypatch, data_t
     assert (hdr_call in settings.set.call_args_list) is routes_hdr
 
 
-@pytest.mark.parametrize("data_types", [["rgb_hdr"], ["rgb_radiance"]])
-def test_prepare_cameras_neutralizes_exposure_for_radiance(monkeypatch, data_types):
+@pytest.mark.parametrize(
+    ("data_types", "isp_cfg", "radiance"),
+    [(["rgb_hdr"], None, False), (["rgb_radiance"], None, True), (["rgb"], object(), False)],
+)
+def test_prepare_cameras_neutralizes_exposure_for_radiance(monkeypatch, data_types, isp_cfg, radiance):
     """Radiance neutralizes camera exposure; standalone HDR keeps the authored camera settings."""
     _install_omni_stubs(monkeypatch)
     from isaaclab_physx.renderers.isaac_rtx_renderer import IsaacRtxRenderer
 
     from pxr import Sdf, Usd, UsdGeom
 
-    authored = {"exposure": 2.0, "exposure:fStop": 2.8, "exposure:iso": 800.0, "exposure:responsivity": 0.5}
-    neutral = {"exposure": 0.0, "exposure:fStop": 1.0, "exposure:iso": 0.0, "exposure:responsivity": 1.0}
+    monkeypatch.setattr("isaaclab_ppisp.resolve_and_normalize", lambda cfg, *args: cfg)
+    authored = {
+        "exposure": 2.0,
+        "exposure:fStop": 2.8,
+        "exposure:iso": 800.0,
+        "exposure:responsivity": 0.5,
+        "exposure:time": 0.125,
+    }
+    neutral = {
+        "exposure": 0.0,
+        "exposure:fStop": 1.0,
+        "exposure:iso": 0.0,
+        "exposure:responsivity": 1.0,
+        "exposure:time": 1.0,
+    }
     stage = Usd.Stage.CreateInMemory()
     camera = UsdGeom.Camera.Define(stage, "/World/Camera").GetPrim()
     for name, value in authored.items():
         camera.CreateAttribute(name, Sdf.ValueTypeNames.Float).Set(value)
     camera.CreateAttribute("omni:rtx:autoExposure:enabled", Sdf.ValueTypeNames.Bool).Set(True)
     spec = SimpleNamespace(
-        cfg=SimpleNamespace(data_types=data_types, isp_cfg=None), camera_prim_paths=("/World/Camera",)
+        cfg=SimpleNamespace(data_types=data_types, isp_cfg=isp_cfg), camera_prim_paths=("/World/Camera",)
     )
     IsaacRtxRenderer.__new__(IsaacRtxRenderer).prepare_cameras(stage, spec)
 
-    radiance = "rgb_radiance" in data_types
     for name, value in (neutral if radiance else authored).items():
-        assert camera.GetAttribute(name).Get() == value
+        assert camera.GetAttribute(name).Get() == pytest.approx(value)
     assert camera.GetAttribute("omni:rtx:autoExposure:enabled").Get() is not radiance
     schemas = camera.GetMetadata("apiSchemas")
     applied = [] if schemas is None else [*schemas.prependedItems, *schemas.explicitItems, *schemas.appendedItems]
@@ -493,6 +488,8 @@ def test_init_enables_replicator_before_applying_global_settings(monkeypatch):
         rtx_renderer.IsaacRtxRenderer(IsaacRtxRendererCfg())
 
     assert call_order == ["enable", "global_settings"]
+    settings.set.assert_any_call("/isaaclab/render/rtx_sensors", True)
+    settings.set.assert_any_call("/physics/fabricUpdateTransformations", True)
 
 
 @pytest.mark.parametrize("configured_value", [None, False, True])

@@ -17,6 +17,7 @@ import sys
 import weakref
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Sequence
+from contextlib import ExitStack
 from typing import TYPE_CHECKING, Any
 
 import warp as wp
@@ -344,13 +345,23 @@ class SensorBase(ABC):
             getattr(obj_ref, callback_name)(event)
 
         # Backend-agnostic: PHYSICS_READY initializes sensors; STOP invalidates them.
-        self._initialize_handle = physics_mgr_cls.register_callback(
+        self._initialize_handle = ExitStack()
+        prepare_handle = physics_mgr_cls.register_callback(
+            lambda payload: PhysicsManager.safe_callback_invoke(
+                _invoke, "_prepare_initialize_callback", payload, physics_manager=physics_mgr_cls
+            ),
+            PhysicsEvent.PHYSICS_READY,
+            order=9,
+        )
+        self._initialize_handle.callback(prepare_handle.deregister)
+        initialize_handle = physics_mgr_cls.register_callback(
             lambda payload: PhysicsManager.safe_callback_invoke(
                 _invoke, "_initialize_callback", payload, physics_manager=physics_mgr_cls
             ),
             PhysicsEvent.PHYSICS_READY,
             order=10,
         )
+        self._initialize_handle.callback(initialize_handle.deregister)
         self._invalidate_initialize_handle = physics_mgr_cls.register_callback(
             lambda payload: PhysicsManager.safe_callback_invoke(
                 _invoke, "_invalidate_initialize_callback", payload, physics_manager=physics_mgr_cls
@@ -371,6 +382,10 @@ class SensorBase(ABC):
                 ),
                 IsaacEvents.PRIM_DELETION,
             )
+
+    def _prepare_initialize_callback(self, event):
+        """Prepare shared stage state before any sensor's initialization callback runs."""
+        pass
 
     def _initialize_callback(self, event):
         """Initializes the scene elements.
@@ -404,7 +419,7 @@ class SensorBase(ABC):
     def _clear_callbacks(self) -> None:
         """Clears the callbacks."""
         if self._initialize_handle is not None:
-            self._initialize_handle.deregister()
+            self._initialize_handle.close()
             self._initialize_handle = None
         if self._invalidate_initialize_handle is not None:
             self._invalidate_initialize_handle.deregister()

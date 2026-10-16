@@ -570,26 +570,41 @@ def test_ovrtx_hdr_color_fills_requested_hdr_outputs(monkeypatch, data_types):
         np.testing.assert_array_equal(data.output[name].warp.numpy(), 2.0)
 
 
-@pytest.mark.parametrize("data_types", [["rgb_hdr"], ["rgb_radiance"]])
-def test_ovrtx_prepare_cameras_neutralizes_exposure_for_radiance(data_types):
+@pytest.mark.parametrize(
+    ("data_types", "isp_cfg", "radiance"),
+    [(["rgb_hdr"], None, False), (["rgb_radiance"], None, True), (["rgb"], object(), False)],
+)
+def test_ovrtx_prepare_cameras_neutralizes_exposure_for_radiance(monkeypatch, data_types, isp_cfg, radiance):
     """Radiance neutralizes camera exposure; standalone HDR keeps the authored camera settings."""
     from pxr import Sdf, Usd, UsdGeom
 
-    authored = {"exposure": 2.0, "exposure:fStop": 2.8, "exposure:iso": 800.0, "exposure:responsivity": 0.5}
-    neutral = {"exposure": 0.0, "exposure:fStop": 1.0, "exposure:iso": 0.0, "exposure:responsivity": 1.0}
+    monkeypatch.setattr("isaaclab_ppisp.resolve_and_normalize", lambda cfg, *args: cfg)
+    authored = {
+        "exposure": 2.0,
+        "exposure:fStop": 2.8,
+        "exposure:iso": 800.0,
+        "exposure:responsivity": 0.5,
+        "exposure:time": 0.125,
+    }
+    neutral = {
+        "exposure": 0.0,
+        "exposure:fStop": 1.0,
+        "exposure:iso": 0.0,
+        "exposure:responsivity": 1.0,
+        "exposure:time": 1.0,
+    }
     stage = Usd.Stage.CreateInMemory()
     camera = UsdGeom.Camera.Define(stage, "/World/Camera").GetPrim()
     for name, value in authored.items():
         camera.CreateAttribute(name, Sdf.ValueTypeNames.Float).Set(value)
     camera.CreateAttribute("omni:rtx:autoExposure:enabled", Sdf.ValueTypeNames.Bool).Set(True)
     spec = types.SimpleNamespace(
-        cfg=types.SimpleNamespace(data_types=data_types, isp_cfg=None), camera_prim_paths=("/World/Camera",)
+        cfg=types.SimpleNamespace(data_types=data_types, isp_cfg=isp_cfg), camera_prim_paths=("/World/Camera",)
     )
     _make_ovrtx_renderer_without_backend().prepare_cameras(stage, spec)
 
-    radiance = "rgb_radiance" in data_types
     for name, value in (neutral if radiance else authored).items():
-        assert camera.GetAttribute(name).Get() == value
+        assert camera.GetAttribute(name).Get() == pytest.approx(value)
     assert camera.GetAttribute("omni:rtx:autoExposure:enabled").Get() is not radiance
     schemas = camera.GetMetadata("apiSchemas")
     applied = [] if schemas is None else [*schemas.prependedItems, *schemas.explicitItems, *schemas.appendedItems]

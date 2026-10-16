@@ -395,7 +395,9 @@ def test_every_camera_prepares_before_the_shared_stage_export(monkeypatch):
     cameras = []
     for prim, data_types in zip(prims, (["rgb"], ["rgb_radiance"])):
         camera = Camera.__new__(Camera)
-        camera.cfg = SimpleNamespace(prim_path=str(prim.GetPath()), data_types=data_types, height=2, width=3)
+        camera.cfg = SimpleNamespace(
+            prim_path=str(prim.GetPath()), data_types=data_types, height=2, width=3, isp_cfg=None
+        )
         camera.stage = stage
         camera._device = "cpu"
         camera._num_envs = 2

@@ -488,11 +488,9 @@ class OVRTXRenderer(BaseRenderer):
 
         When ``spec.cfg.isp_cfg`` is set, resolves it (sentinel discovery +
         normalization) via :func:`isaaclab_ppisp.resolve_and_normalize` so
-        :mod:`isaaclab` does not need to know about PPISP. Then pins
-        ``exposure:*`` to neutral and applies ``OmniRtxCameraExposureAPI_1`` so
-        the RTX exposure model OVRTX embeds does not compound on top of the
-        ISP. Exposure is also neutralized when ``rgb_radiance`` is requested. Otherwise, the
-        camera prim's authored exposure is left alone.
+        :mod:`isaaclab` does not need to know about PPISP. Camera exposure is neutralized
+        only when ``rgb_radiance`` is requested; otherwise authored exposure is preserved,
+        including when an ISP is configured.
         """
         if spec.cfg.isp_cfg is not None:
             try:
@@ -502,8 +500,7 @@ class OVRTXRenderer(BaseRenderer):
 
             camera_prim_path = spec.camera_prim_paths[0] if spec.camera_prim_paths else None
             spec.cfg.isp_cfg = resolve_and_normalize(spec.cfg.isp_cfg, stage, camera_prim_path)
-        needs_neutral_exposure = spec.cfg.isp_cfg is not None or "rgb_radiance" in spec.cfg.data_types
-        if needs_neutral_exposure and spec.camera_prim_paths:
+        if "rgb_radiance" in spec.cfg.data_types and spec.camera_prim_paths:
             _apply_rtx_exposure_overrides(stage, list(spec.camera_prim_paths))
 
     def prepare_stage(self, stage: Any, num_envs: int) -> None:

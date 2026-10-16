@@ -261,11 +261,9 @@ class IsaacRtxRenderer(BaseRenderer):
 
         When ``spec.cfg.isp_cfg`` is set, resolves it (sentinel discovery +
         normalization) via :func:`isaaclab_ppisp.resolve_and_normalize` so
-        :mod:`isaaclab` does not need to know about PPISP. Then pins
-        ``exposure:*`` to neutral and applies ``OmniRtxCameraExposureAPI_1`` so
-        RTX's physical-camera exposure model does not compound on top of the
-        ISP. Exposure is also neutralized when ``rgb_radiance`` is requested. Otherwise, the
-        camera prim's authored exposure is left alone.
+        :mod:`isaaclab` does not need to know about PPISP. Camera exposure is neutralized
+        only when ``rgb_radiance`` is requested; otherwise authored exposure is preserved,
+        including when an ISP is configured.
 
         :attr:`~isaaclab.sensors.camera.CameraCfg.background_color` is applied
         per-render-product in :meth:`create_render_data` via USD attributes.
@@ -281,8 +279,7 @@ class IsaacRtxRenderer(BaseRenderer):
         if spec.cfg.isp_cfg is not None or not _HDR_DATA_TYPES.isdisjoint(spec.cfg.data_types):
             # Gaussian splats otherwise skip tonemapping and never reach the HdrColor AOV.
             get_settings_manager().set("/rtx/rtpt/gaussian/skipTonemapping/enabled", False)
-        needs_neutral_exposure = spec.cfg.isp_cfg is not None or "rgb_radiance" in spec.cfg.data_types
-        if needs_neutral_exposure and spec.camera_prim_paths:
+        if "rgb_radiance" in spec.cfg.data_types and spec.camera_prim_paths:
             _apply_rtx_exposure_overrides(stage, list(spec.camera_prim_paths))
 
     def supported_output_types(self) -> dict[RenderBufferKind, RenderBufferSpec]:

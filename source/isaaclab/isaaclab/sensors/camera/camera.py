@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import logging
 import sys
-import weakref
 from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any, Literal, cast
 
@@ -19,7 +18,6 @@ from pxr import Usd, UsdGeom, UsdPhysics
 
 from ... import sim as sim_utils
 from ...app.logging_utils import force_log_level
-from ...physics import PhysicsEvent, PhysicsManager
 from ...renderers import BaseRenderer, CameraRenderSpec
 from ...sim.views import FrameView
 from ...utils.math import (
@@ -208,7 +206,6 @@ class Camera(SensorBase):
             RuntimeError: If no camera prim is found at the given path.
             ValueError: If the provided data types are not supported by the camera or active renderer.
         """
-        self._prepare_renderer_handle = None
         # perform check on supported data types
         self._check_supported_data_types(cfg)
         # initialize base class
@@ -641,23 +638,12 @@ class Camera(SensorBase):
         sim_ctx = sim_utils.SimulationContext.instance()
         if sim_ctx is None:
             raise RuntimeError("SimulationContext is not initialized.")
-        # Normally created in ``__init__``; only missing when the camera was built without a simulation.
-        if self._renderer is None:
-            self._renderer = sim_ctx.get_or_create_backend(self.cfg.renderer_cfg)
-
         # Per-camera USD setup must run **before** ``ensure_prepare_stage`` so renderers that snapshot
         # the stage (ovrtx's ``stage.Export``) capture the overrides in their exported USD. Every camera
-        # already did this in :meth:`_prepare_renderer_callback`; repeating it is harmless and covers
+        # already did this in :meth:`_prepare_initialize_callback`; repeating it is harmless and covers
         # cameras initialized without that callback.
-        cam_paths = tuple(str(p.GetPath()) for p in sim_utils.find_matching_prims(self.cfg.prim_path, self.stage))
-        render_spec = CameraRenderSpec(
-            cfg=self.cfg,
-            device=str(sim_ctx.device),
-            num_instances=self._num_envs,
-            camera_prim_paths=cam_paths,
-            view_count=self._num_envs,
-        )
-        self._renderer.prepare_cameras(self.stage, render_spec)
+        render_spec = self._prepare_renderer(self._num_envs)
+        cam_paths = render_spec.camera_prim_paths
 
         # Stage preprocessing must happen before creating the view because the view keeps
         # references to prims located in the stage.
@@ -1027,31 +1013,7 @@ class Camera(SensorBase):
     Internal simulation callbacks.
     """
 
-    def _register_callbacks(self):
-        """Register camera stage preparation before the ordinary sensor initialization callbacks."""
-        super()._register_callbacks()
-        physics_mgr_cls = sim_utils.SimulationContext.instance().physics_manager
-        obj_ref = weakref.proxy(self)
-
-        def _prepare(event):
-            obj_ref._prepare_renderer_callback(event)
-
-        # All cameras must author their USD overrides before the first camera exports the shared stage.
-        # Sensor initialization runs at order 10. Preserve weak ownership and backend exception forwarding.
-        self._prepare_renderer_handle = physics_mgr_cls.register_callback(
-            lambda payload: PhysicsManager.safe_callback_invoke(_prepare, payload, physics_manager=physics_mgr_cls),
-            PhysicsEvent.PHYSICS_READY,
-            order=9,
-        )
-
-    def _clear_callbacks(self) -> None:
-        """Release the camera preparation subscription along with the ordinary sensor subscriptions."""
-        if self._prepare_renderer_handle is not None:
-            self._prepare_renderer_handle.deregister()
-            self._prepare_renderer_handle = None
-        super()._clear_callbacks()
-
-    def _prepare_renderer_callback(self, event):
+    def _prepare_initialize_callback(self, event):
         """Apply this camera's renderer USD overrides before any camera initializes.
 
         A renderer that exports the stage when the first camera initializes, such as OVRTX, then sees
@@ -1059,16 +1021,17 @@ class Camera(SensorBase):
         """
         if self._is_initialized:
             return
+        self._prepare_renderer()
+
+    def _prepare_renderer(self, num_views: int | None = None) -> CameraRenderSpec:
+        """Resolve camera prims and apply renderer overrides before shared-stage export."""
         sim_ctx = sim_utils.SimulationContext.instance()
         if self._renderer is None:
             self._renderer = sim_ctx.get_or_create_backend(self.cfg.renderer_cfg)
-        # Matches the environment count that sensor initialization derives next.
-        clone_plan = sim_ctx.get_clone_plan()
-        if clone_plan is not None:
-            num_views = len(clone_plan.topology.world_prototype_layout)
-        else:
-            num_views = len(sim_utils.find_matching_prims(self.cfg.prim_path, self.stage))
         cam_paths = tuple(str(p.GetPath()) for p in sim_utils.find_matching_prims(self.cfg.prim_path, self.stage))
+        if num_views is None:
+            clone_plan = sim_ctx.get_clone_plan()
+            num_views = len(clone_plan.topology.world_prototype_layout) if clone_plan is not None else len(cam_paths)
         render_spec = CameraRenderSpec(
             cfg=self.cfg,
             device=str(sim_ctx.device),
@@ -1077,6 +1040,7 @@ class Camera(SensorBase):
             view_count=num_views,
         )
         self._renderer.prepare_cameras(self.stage, render_spec)
+        return render_spec
 
     def _invalidate_initialize_callback(self, event):
         """Invalidates the scene elements."""
