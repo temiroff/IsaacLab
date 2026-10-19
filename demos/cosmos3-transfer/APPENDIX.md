@@ -21,9 +21,7 @@ period sets the gap between frames Cosmos gets; keep it at or under 1/30 s, or t
 | `--history N` | Cosmos history window (default 30; lower values ghosted in our tests) |
 | `--output DIR` | Output folder (default `../output/shadow-<timestamp>`) |
 
-`setup.sh --versions` lists every repository and model snapshot used. The Cosmos Framework is the public repository, with a small
-compatibility patch applied at setup (`cosmos-framework-causal-aliases.patch`); this route has not been run on a clean
-machine.
+`setup.sh --versions` lists every repository and model snapshot used. The Cosmos Framework is the public repository; this route has not been run on a clean machine.
 
 ## ARM (aarch64)
 
