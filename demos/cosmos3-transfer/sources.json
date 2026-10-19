@@ -1,13 +1,7 @@
 {
-  "_comment": "Single place for every download location and pin. Setup and run read this file; no script contains a URL or commit. To switch a component (for example the Cosmos Framework from the private to the public repository), edit active_framework and run the demo again.",
-  "active_framework": "private",
+  "_comment": "Single place for every download location and pin. Setup and run read this file; no script contains a URL or commit.",
+  "active_framework": "public",
   "frameworks": {
-    "private": {
-      "repo": "https://github.com/nvidia-cosmos/cosmos-framework-private",
-      "revision": "af85e34279df9b4c2c6752443d52e685c40c4897",
-      "access": "private",
-      "patch": null
-    },
     "public": {
       "repo": "https://github.com/NVIDIA/cosmos-framework",
       "revision": "7cfaf7854b2114eda5deb36250a7e8f00c64d69e",

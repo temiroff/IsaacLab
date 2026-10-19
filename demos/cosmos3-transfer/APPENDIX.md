@@ -21,9 +21,9 @@ period sets the gap between frames Cosmos gets; keep it at or under 1/30 s, or t
 | `--history N` | Cosmos history window (default 30; lower values ghosted in our tests) |
 | `--output DIR` | Output folder (default `../output/shadow-<timestamp>`) |
 
-`setup.sh --versions` lists every repository and model snapshot used. To switch the Cosmos Framework from the private to
-the public repository (with its small compatibility patch), set `active_framework` to `public` in `sources.json`; this
-route has not been run on a clean machine.
+`setup.sh --versions` lists every repository and model snapshot used. The Cosmos Framework is the public repository, with a small
+compatibility patch applied at setup (`cosmos-framework-causal-aliases.patch`); this route has not been run on a clean
+machine.
 
 ## ARM (aarch64)
 
@@ -36,7 +36,6 @@ one x86 machine, with `Camera modifier path: PASS` on both. No other ARM system 
 - Cosmos adds geometry the simulator does not have (for example below the hand).
 - Tested layouts: two 48 GB MIG slices (x86) and an RTX PRO 4000 with a GB300 (aarch64). One shared GPU, or a Cosmos
   GPU under about 40 GB, is not tested.
-- The Cosmos Framework is a private repository for now.
 - The recording script relies on two private details of the camera and modifier (`_data` and `_stream`); a change to
   those classes would break it.
 

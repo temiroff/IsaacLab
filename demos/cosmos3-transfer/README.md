@@ -15,8 +15,8 @@ detail the simulator does not have.*
 - About 80 GB free disk. The installed files measured about 60 GB on ARM and 70 GB on x86: 30 to 40 GB for the checkout
   with its environments and 30 GB for the Cosmos checkpoint. Downloads and caches may need more.
 - Two GPUs (or MIG slices) of about 48 GB: the simulator on one, Cosmos on the other (Cosmos needs about 45 GB).
-- **Access that a person has to grant** (step 4 below). The Cosmos Framework repository is **private for now**: without
-  access to it, setup stops there.
+- **Access that a person has to grant** (step 4 below): the Hugging Face token and the model license. The Cosmos
+  Framework is a public repository and needs no access request.
 
 ## Quick start
 
@@ -62,7 +62,6 @@ What you should see:
 | --- | --- |
 | Hugging Face token | Create a token of type **Read** at https://huggingface.co/settings/tokens and paste it when asked (input is hidden) |
 | Model license | Open https://huggingface.co/nvidia/Cosmos3-Nano-Sim-Transfer and click **Agree and access repository** |
-| Cosmos Framework repository | Request access to https://github.com/nvidia-cosmos/cosmos-framework-private, then sign in with git (for example `gh auth login`) |
 | Isaac Sim license | Read the [license](https://docs.omniverse.nvidia.com/platform/latest/common/NVIDIA_Omniverse_License_Agreement.html); type `yes` only if you accept. The answer is saved in this checkout only, so a new clone asks again |
 
 It re-checks after each item. Run it again at any time.
