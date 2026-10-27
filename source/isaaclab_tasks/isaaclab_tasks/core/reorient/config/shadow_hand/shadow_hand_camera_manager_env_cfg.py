@@ -147,7 +147,7 @@ class ShadowHandCameraManagerEnvCfg(ShadowHandManagerEnvCfg):
 class ShadowHandCameraManagerCosmosEnvCfg(ShadowHandCameraManagerEnvCfg):
     """Manager-based Shadow Hand task with depth-guided Cosmos RGB, selected with ``presets=cosmos``.
 
-    The camera runs the same Cosmos chain as the Direct preset, and the policy's camera observation term
+    The camera runs the same Cosmos processors as the Direct preset, and the policy's camera observation term
     reads the generated ``rgb``. Start the Cosmos service first.
     """
 

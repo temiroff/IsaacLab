@@ -264,10 +264,10 @@ def test_registered_cosmos_preset_composes_rgb_observations_and_local_checkpoint
     env_cfg = parse_env_cfg(task_name, overrides=("presets=cosmos", "env.episode_length_s=30.0"))
     env_cfg.validate()
     camera = env_cfg.scene.tiled_camera
-    transfer = camera.modifiers["distance_to_image_plane"][-1]
+    transfer = camera.tensor_processors[-1]
 
     assert env_cfg.scene.num_envs == 1
-    assert camera.data_types == ["rgb"] and transfer.output == "rgb"
+    assert camera.data_types == ["rgb"] and transfer.outputs == ["rgb"]
     assert transfer.backend.max_episode_frames == 1801
     assert camera.update_period == 0.0
     assert env_cfg.feature_extractor.enabled and env_cfg.feature_extractor.train
@@ -339,7 +339,8 @@ def test_manager_cosmos_preset_feeds_generated_rgb_to_the_camera_observation_ter
     camera = env_cfg.scene.tiled_camera
 
     assert env_cfg.scene.num_envs == 1 and (camera.width, camera.height) == (640, 640)
-    assert camera.modifier_outputs() == {"distance_to_image_plane": "rgb"}
+    processors = camera.tensor_processors
+    assert processors[0].inputs == ["distance_to_image_plane"] and processors[-1].outputs == ["rgb"]
     assert env_cfg.observations.policy.camera_features.params["feature_extractor_cfg"] == env_cfg.feature_extractor
     assert env_cfg.feature_extractor.image_update_frames == 4
     assert env_cfg.feature_extractor.pretrained_checkpoint is None

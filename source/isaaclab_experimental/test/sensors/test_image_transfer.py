@@ -3,19 +3,24 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
-"""Image transfer scheduling, resets, and ownership through the modifier interface."""
+"""Image transfer scheduling, resets, and ownership through the tensor processor interface."""
 
 from types import SimpleNamespace
 
 import pytest
 import torch
 import warp as wp
-from isaaclab_experimental.image_transfer import ImageTransferModifierCfg, depth_to_control, srgb_to_linear
-from isaaclab_experimental.image_transfer import modifier as modifier_module
+from isaaclab_experimental.image_transfer import (
+    FunctionProcessorCfg,
+    ImageTransferProcessorCfg,
+    depth_to_control,
+    srgb_to_linear,
+)
+from isaaclab_experimental.image_transfer import processor as processor_module
 
 from isaaclab.sim import BackendCfg
 from isaaclab.utils import configclass
-from isaaclab.utils.modifiers import ModifierCfg, ModifierChain
+from isaaclab.utils.warp import ProxyArray
 
 pytestmark = pytest.mark.unit
 
@@ -61,87 +66,97 @@ class RecordingModelCfg(BackendCfg):
 
 @pytest.fixture
 def no_sim(monkeypatch):
-    monkeypatch.setattr(modifier_module, "SimulationContext", SimpleNamespace(instance=lambda: None))
-
-
-def _modifier(**kwargs):
-    cfg = ImageTransferModifierCfg(backend=RecordingModelCfg(), seed=7, **kwargs)
-    modifier = cfg.func(cfg=cfg, data_dim=(2, 2, 3, 3), device="cpu")
-    return modifier, modifier._owned_model
+    monkeypatch.setattr(processor_module, "SimulationContext", SimpleNamespace(instance=lambda: None))
 
 
 def _controls(value):
     return torch.full((2, 2, 3, 3), value, dtype=torch.uint8)
 
 
+def _buffers(controls, mask=None):
+    """Camera buffers holding ``controls`` and, when given, the capture mask."""
+    buffers = {"control": ProxyArray(wp.from_torch(controls))}
+    if mask is not None:
+        buffers["env_mask"] = ProxyArray(wp.array(mask, dtype=wp.bool, device="cpu"))
+    return buffers
+
+
+def _processor(**kwargs):
+    cfg = ImageTransferProcessorCfg(backend=RecordingModelCfg(), seed=7, **kwargs)
+    processor = cfg.func(cfg, _buffers(_controls(0)))
+    return processor, processor._owned_model
+
+
+def _rgb(processor, value, mask=None):
+    return processor(_buffers(_controls(value), mask))["rgb"].torch
+
+
 def test_chunks_follow_the_configured_cadence_and_hold_between_chunks(no_sim):
     """The first chunk uses initial_frames, later chunks update_frames; queued controls are owned copies."""
-    modifier, model = _modifier(initial_frames=1, update_frames=2)
+    processor, model = _processor(initial_frames=1, update_frames=2)
     controls = _controls(10)
+    buffers = _buffers(controls)
 
-    output = modifier(controls)
+    output = processor(buffers)["rgb"]
     controls.fill_(20)
-    assert modifier(controls) is output
+    assert processor(buffers)["rgb"] is output
     assert len(model.steps) == 1
-    assert torch.equal(output, _controls(245))
+    assert torch.equal(output.torch, _controls(245))
     controls.fill_(30)
-    modifier(controls)
+    processor(buffers)
 
     assert model.opened == [(2, (7, 8))]
     assert [tuple(chunk.shape) for chunk in model.steps[1][0]] == [(2, 2, 3, 3)] * 2
     torch.testing.assert_close(model.steps[1][0][0][:, 0, 0, 0], torch.tensor([20, 30], dtype=torch.uint8))
-    assert torch.equal(output, _controls(225))
+    assert torch.equal(output.torch, _controls(225))
 
 
 def test_reset_restarts_only_the_selected_view_with_a_new_seed(no_sim):
-    modifier, model = _modifier(initial_frames=1, update_frames=1)
-    modifier(_controls(10))
+    processor, model = _processor(initial_frames=1, update_frames=1)
+    _rgb(processor, 10)
 
-    modifier.reset(torch.tensor([1]))
-    assert torch.equal(modifier._output[1], torch.zeros(2, 3, 3, dtype=torch.uint8))
-    assert torch.equal(modifier._output[0], torch.full((2, 3, 3), 245, dtype=torch.uint8))
-    modifier(_controls(10))
+    processor.reset(torch.tensor([1]))
+    assert torch.equal(processor._output[1], torch.zeros(2, 3, 3, dtype=torch.uint8))
+    assert torch.equal(processor._output[0], torch.full((2, 3, 3), 245, dtype=torch.uint8))
+    _rgb(processor, 10)
 
     # View 1 starts again from its seed 8, advanced by the number of views for its second episode.
     assert model.steps[-1][1:] == ((1,), (10,))
 
 
-def test_a_capture_queues_controls_only_for_the_views_it_covers(no_sim):
+def test_a_capture_queues_controls_only_for_the_views_in_env_mask(no_sim):
     """After independent resets, environments capture at different steps; a view a capture skipped queues nothing."""
-    modifier, model = _modifier(initial_frames=1, update_frames=2)
-    camera = SimpleNamespace(_is_outdated=wp.array([True, True], dtype=wp.bool, device="cpu"))
-    modifier.bind_sensor(camera)
-    modifier(_controls(1))
+    processor, model = _processor(initial_frames=1, update_frames=2)
+    _rgb(processor, 1, [True, True])
 
     # The two views now capture on alternate calls; each call's data holds a stale render for the other view.
     for value, mask in ((2, [True, False]), (3, [False, True]), (4, [True, False]), (5, [False, True])):
-        camera._is_outdated = wp.array(mask, dtype=wp.bool, device="cpu")
-        modifier(_controls(value))
+        _rgb(processor, value, mask)
 
     assert len(model.steps) == 2
     chunks = model.steps[1][0]
     assert chunks[0][:, 0, 0, 0].tolist() == [2, 4] and chunks[1][:, 0, 0, 0].tolist() == [3, 5]
-    assert [len(queue) for queue in modifier._pending] == [0, 0]
+    assert [len(queue) for queue in processor._pending] == [0, 0]
 
 
 def test_a_failed_generation_publishes_nothing_and_is_not_retried(no_sim):
-    modifier, model = _modifier()
+    processor, model = _processor()
     model.fail = True
 
     with pytest.raises(RuntimeError, match="generation failed"):
-        modifier(_controls(10))
-    assert torch.equal(modifier._output, _controls(0))
+        _rgb(processor, 10)
+    assert torch.equal(processor._output, _controls(0))
     model.fail = False
     with pytest.raises(RuntimeError, match="failed"):
-        modifier(_controls(10))
+        _rgb(processor, 10)
     assert len(model.steps) == 1
 
 
-def test_a_model_without_a_simulation_is_owned_and_closed_with_the_modifier(no_sim):
-    modifier, model = _modifier()
+def test_a_model_without_a_simulation_is_owned_and_closed_with_the_processor(no_sim):
+    processor, model = _processor()
 
-    modifier.close()
-    modifier.close()
+    processor.close()
+    processor.close()
 
     assert model.streams[0].closed == 1
     assert model.closed == 1
@@ -151,11 +166,11 @@ def test_a_simulation_model_is_shared_and_left_open(monkeypatch):
     model = RecordingModel(None)
     requested = []
     sim = SimpleNamespace(get_or_create_backend=lambda cfg: requested.append(cfg) or model)
-    monkeypatch.setattr(modifier_module, "SimulationContext", SimpleNamespace(instance=lambda: sim))
-    cfg = ImageTransferModifierCfg(backend=RecordingModelCfg())
+    monkeypatch.setattr(processor_module, "SimulationContext", SimpleNamespace(instance=lambda: sim))
+    cfg = ImageTransferProcessorCfg(backend=RecordingModelCfg())
 
-    first = cfg.func(cfg=cfg, data_dim=(2, 2, 3, 3), device="cpu")
-    second = cfg.func(cfg=cfg, data_dim=(2, 2, 3, 3), device="cpu")
+    first = cfg.func(cfg, _buffers(_controls(0)))
+    second = cfg.func(cfg, _buffers(_controls(0)))
     first.close()
 
     assert requested == [cfg.backend, cfg.backend]
@@ -164,19 +179,25 @@ def test_a_simulation_model_is_shared_and_left_open(monkeypatch):
     assert model.closed == 0
 
 
-def test_depth_controls_feed_image_transfer_in_a_chain(no_sim):
-    """Near depth is white, far and missing depth black, and the chain generates from those controls."""
-    depth = torch.tensor([1.0, 9.0, float("inf"), 0.0]).view(1, 1, 4, 1).expand(2, 2, 4, 1)
-    chain = ModifierChain(
-        [
-            ModifierCfg(func=depth_to_control, params={"near": 1.0, "far": 9.0}),
-            ImageTransferModifierCfg(backend=RecordingModelCfg()),
-        ],
-        "cpu",
-    )
+def test_depth_controls_feed_image_transfer(no_sim):
+    """Near depth is white, far and missing depth black, and the transfer generates from those controls."""
+    depth = torch.tensor([1.0, 9.0, float("inf"), 0.0]).view(1, 1, 4, 1).expand(2, 2, 4, 1).contiguous()
+    buffers = {"distance_to_image_plane": ProxyArray(wp.from_torch(depth))}
+    cfgs = [
+        FunctionProcessorCfg(
+            function=depth_to_control,
+            params={"near": 1.0, "far": 9.0},
+            inputs=["distance_to_image_plane"],
+            outputs=["control"],
+        ),
+        ImageTransferProcessorCfg(backend=RecordingModelCfg()),
+    ]
 
-    output = chain(depth)
+    # Construct and run in order, as a camera does: each processor reads the outputs of the earlier ones.
+    for cfg in cfgs:
+        buffers.update(cfg.func(cfg, buffers)(buffers))
 
+    output = buffers["rgb"].torch
     assert output.shape == (2, 2, 4, 3)
     assert output[0, 0, :, 0].tolist() == [0, 255, 255, 255]
     with pytest.raises(ValueError, match="near < far"):
@@ -193,19 +214,19 @@ def test_srgb_to_linear_inverts_the_srgb_transfer_function():
 
 def test_a_view_resetting_mid_chunk_joins_the_next_chunk_and_queues_stay_bounded(no_sim):
     """With four-frame updates, a view that resets mid-chunk starts with its newest control at the next chunk."""
-    modifier, model = _modifier(initial_frames=1, update_frames=4, max_pending_frames=8)
-    modifier(_controls(1))
-    modifier(_controls(2))
-    modifier.reset([1])
+    processor, model = _processor(initial_frames=1, update_frames=4, max_pending_frames=8)
+    _rgb(processor, 1)
+    _rgb(processor, 2)
+    processor.reset([1])
     for value in (3, 4, 5):
-        modifier(_controls(value))
+        _rgb(processor, value)
 
     chunks, resets, _ = model.steps[-1]
     assert [chunk.shape[0] for chunk in chunks] == [4, 1] and resets == (1,)
     assert int(chunks[1][0, 0, 0, 0]) == 5
-    assert [len(queue) for queue in modifier._pending] == [0, 0]
+    assert [len(queue) for queue in processor._pending] == [0, 0]
     # Both views now follow one four-frame cadence for as long as the episode runs.
     for value in range(6, 30):
-        modifier(_controls(value))
+        _rgb(processor, value)
     assert all([chunk.shape[0] for chunk in step[0]] == [4, 4] for step in model.steps[2:])
-    assert max(len(queue) for queue in modifier._pending) < 4
+    assert max(len(queue) for queue in processor._pending) < 4

@@ -27,7 +27,7 @@ def _kuka(**overrides):
 
 
 def _budget(env_cfg):
-    return env_cfg.scene.base_camera.modifiers["distance_to_image_plane"][1].backend.max_episode_frames
+    return env_cfg.scene.base_camera.tensor_processors[1].backend.max_episode_frames
 
 
 def _serve(monkeypatch, partial_resets=False):
@@ -48,7 +48,7 @@ def test_apply_cosmos_puts_cosmos_on_the_policy_camera_of_an_unmodified_task():
     apply_cosmos(env_cfg, prompt=["A lab.", "A kitchen."])
     env_cfg.validate()
     camera = env_cfg.scene.base_camera
-    chain = camera.modifiers["distance_to_image_plane"]
+    chain = camera.tensor_processors
 
     assert (camera.width, camera.height) == (640, 640)
     assert chain[1].backend.prompt == ["A lab.", "A kitchen."]
@@ -70,7 +70,7 @@ def test_the_shadow_hand_preset_options_are_set_with_overrides():
     )
     env_cfg.validate()
     camera = env_cfg.scene.tiled_camera
-    chain = camera.modifiers["distance_to_image_plane"]
+    chain = camera.tensor_processors
     assert len(chain) == 2
     assert chain[1].backend.prompt == ["A kitchen.", "A lab."]
     assert chain[1].backend.endpoint == "tcp://127.0.0.1:5556"
@@ -92,7 +92,7 @@ def test_several_environments_need_a_compiled_service_that_batches_them(monkeypa
     _serve(monkeypatch, partial_resets=True)
     apply_cosmos(env_cfg)
     assert env_cfg.scene.num_envs == 4
-    assert env_cfg.scene.base_camera.modifiers["distance_to_image_plane"][1].backend.max_episode_frames > 1
+    assert env_cfg.scene.base_camera.tensor_processors[1].backend.max_episode_frames > 1
 
 
 def test_several_services_split_the_environments_and_each_is_checked(monkeypatch):
@@ -109,7 +109,7 @@ def test_several_services_split_the_environments_and_each_is_checked(monkeypatch
     env_cfg = _kuka()
     env_cfg.scene.num_envs = 3
     apply_cosmos(env_cfg, endpoint=[compiled, eager])
-    backend = env_cfg.scene.base_camera.modifiers["distance_to_image_plane"][1].backend
+    backend = env_cfg.scene.base_camera.tensor_processors[1].backend
     assert backend.endpoint == ["tcp://127.0.0.1:5556", "tcp://127.0.0.1:5557"]
     assert checked == ["tcp://127.0.0.1:5556", "tcp://127.0.0.1:5557"]
 
@@ -132,7 +132,7 @@ def test_the_shadow_hand_preset_batches_several_environments_at_its_camera_rate(
 
     assert env_cfg.scene.num_envs == 2
     assert env_cfg.scene.tiled_camera.update_period == 0.1
-    assert env_cfg.scene.tiled_camera.modifiers["distance_to_image_plane"][-1].backend.max_episode_frames == 101
+    assert env_cfg.scene.tiled_camera.tensor_processors[-1].backend.max_episode_frames == 101
 
 
 def test_the_budget_counts_every_capture_and_keeps_the_camera_at_every_step():
@@ -159,7 +159,7 @@ def test_cosmos_needs_one_rgb_camera_or_an_explicit_choice():
     with pytest.raises(ValueError, match="`camera` argument"):
         apply_cosmos(env_cfg, prompt="A lab.")
     apply_cosmos(env_cfg, prompt="A lab.", camera="wrist_camera")
-    assert env_cfg.scene.wrist_camera.modifiers and not env_cfg.scene.base_camera.modifiers
+    assert env_cfg.scene.wrist_camera.tensor_processors and not env_cfg.scene.base_camera.tensor_processors
 
 
 def test_named_cameras_share_one_session_at_one_canvas_and_keep_their_sizes():
@@ -171,16 +171,16 @@ def test_named_cameras_share_one_session_at_one_canvas_and_keep_their_sizes():
 
     for name, size in (("base_camera", (64, 64)), ("wrist_camera", (128, 64))):
         camera = getattr(env_cfg.scene, name)
-        chain = camera.modifiers["distance_to_image_plane"]
+        chain = camera.tensor_processors
         assert (camera.width, camera.height) == (640, 640)
-        assert chain[1].backend.cameras == ("base_camera", "wrist_camera")
+        assert chain[1].backend.cameras == ("base_camera", "wrist_camera") and chain[1].camera == name
         assert (chain[-1].params["width"], chain[-1].params["height"]) == size
 
     # A list of names selects the cameras in the order given.
     names = ["wrist_camera", "base_camera"]
     env_cfg = parse_env_cfg(KUKA_TASK, overrides=(KUKA_DUO_PRESETS, "env.scene.num_envs=1"))
     apply_cosmos(env_cfg, camera=names)
-    assert env_cfg.scene.base_camera.modifiers["distance_to_image_plane"][1].backend.cameras == tuple(names)
+    assert env_cfg.scene.base_camera.tensor_processors[1].backend.cameras == tuple(names)
 
     # Two cameras of two environments are four views, which need independent resets.
     with pytest.raises(ValueError, match="without --no-compile"):
@@ -202,7 +202,7 @@ def test_every_camera_sharing_a_session_must_render_synchronously():
     env_cfg.scene.wrist_camera.renderer_cfg.async_rendering = True
     with pytest.raises(ValueError, match="wrist_camera"):
         apply_cosmos(env_cfg, camera=["base_camera", "wrist_camera"])
-    assert not env_cfg.scene.base_camera.modifiers
+    assert not env_cfg.scene.base_camera.tensor_processors
 
 
 def test_separate_shadow_hand_configs_do_not_share_cosmos_settings():
@@ -224,4 +224,4 @@ def test_a_subclass_of_the_shadow_hand_preset_keeps_env_cosmos_on_its_camera():
         episode_length_s: float = 5.0
 
     env_cfg = ShorterEpisodeCfg()
-    assert env_cfg.cosmos is env_cfg.scene.tiled_camera.modifiers["distance_to_image_plane"][1].backend
+    assert env_cfg.cosmos is env_cfg.scene.tiled_camera.tensor_processors[1].backend

@@ -1,6 +1,6 @@
 # Cosmos camera integration
 
-`isaaclab_experimental.cosmos` connects camera modifiers to a resident Cosmos
+`isaaclab_experimental.cosmos` connects camera tensor processors to a resident Cosmos
 Sim-Transfer service. Run Isaac Lab with a camera configured to connect to the
 service's endpoint. Training uses the existing Isaac Lab environment and command.
 
@@ -71,7 +71,7 @@ Limits of `apply_cosmos`:
 - The environment count is limited by GPU memory and the transport. Agent configurations with
   fixed minibatch sizes larger than the rollout (some rl_games configurations) need adjusting; RSL-RL works as
   configured.
-- The camera must publish only `rgb`, use a pinhole lens, and have no existing modifiers. Rendering must be
+- The camera must publish only `rgb`, use a pinhole lens, and have no existing tensor processors. Rendering must be
   synchronous and the scene must use lazy sensor updates.
 - The camera renders at the Cosmos canvas, so its `image_shape` and intrinsics describe the canvas, while its `rgb`
   output keeps the original size. Direct tasks that size their observation space from the camera configuration,
@@ -174,7 +174,7 @@ Isaac Lab overrides:
 
 For example, `isaaclab train --task Isaac-Reorient-Cube-Shadow-Camera-Direct presets=cosmos
 env.cosmos.prompt="A Shadow Hand turning a red cube."`. Omitted options preserve the preset's values, and the overrides keep its
-image size, modifier chain, and feature-extractor supervision.
+image size, tensor processors, and feature-extractor supervision.
 
 ## Client and server packages
 
@@ -198,7 +198,8 @@ package also exports the camera client API for existing task configurations.
 ## Configure another camera task
 
 `cosmos_camera` is the simplest way: it chooses the canvas, keeps the view and the published size, and builds the
-chain. To write the chain by hand instead, add it to the task's camera configuration. For depth conditioning:
+tensor processors. To write them by hand instead, add them to the task's camera configuration. For depth
+conditioning:
 
 ```python
 import math
@@ -206,7 +207,7 @@ import math
 from isaaclab.sensors import CameraCfg
 from isaaclab_experimental.cosmos.client import CosmosModelCfg, depth_processor
 
-input_name, modifiers = depth_processor(
+processors = depth_processor(
     CosmosModelCfg(
         prompt="A robot arm manipulating an object on a workbench.",
         # The initial capture plus the episode's captures (here 10 s at 30 per second), rounded up to 1 + 4*k.
@@ -223,14 +224,14 @@ camera_cfg = CameraCfg(
     height=480,
     width=832,
     data_types=["rgb"],
-    modifiers={input_name: modifiers},
+    tensor_processors=processors,
 )
 ```
 
-The camera requests `distance_to_image_plane` from the renderer because the chain
-uses it as input. The depth modifier converts metric depth to three-channel uint8
+The camera requests `distance_to_image_plane` from the renderer because the depth
+processor reads it. The depth processor converts metric depth to three-channel uint8
 controls: near hits are white and far hits are black. Choose `near` and `far` for
-the scene. The Cosmos modifier sends these controls to the service and publishes
+the scene. The Cosmos processor sends these controls to the service and publishes
 the generated images as `camera.data.output["rgb"]`. Observation terms can read
 `camera.data.output["rgb"].torch` as usual.
 
@@ -277,10 +278,10 @@ captions reach the model unchanged. In code, `read_prompt_files([...])` returns 
 
 ## Runtime and resets
 
-The camera's post-processing chain is the integration boundary.
-`CosmosTransferModifier` is implemented in `client/cosmos_modifier.py`, with its
-`CosmosTransferModifierCfg` in `client/cosmos_modifier_cfg.py`. It uses the shared image
-transfer modifier for queuing, resets, and publication, and validates Cosmos's
+The camera's tensor processors are the integration boundary.
+`CosmosTransferProcessor` is implemented in `client/cosmos_processor.py`, with its
+`CosmosTransferProcessorCfg` in `client/cosmos_processor_cfg.py`. It uses the shared image
+transfer processor for queuing, resets, and publication, and validates Cosmos's
 required frame cadence before opening a stream. `CosmosModelCfg` creates an
 endpoint client implementing the generic image transfer model contract.
 The client opens a generation session on its first control chunk. Requests carry
@@ -321,7 +322,7 @@ uv run --no-sync isaaclab-cosmos-server --checkpoint "$COSMOS_CHECKPOINT"
 Keep the default history of 30 latent frames for quality. If the environments do not fit beside Isaac Sim, run the
 service on a GPU of its own with `--device cuda:1`.
 
-A camera with a Cosmos chain requests one view per environment when its session opens. The server uses that
+A camera with Cosmos processors requests one view per environment when its session opens. The server uses that
 count without a separate view setting. A compiled server compiles again for each new count, and Torch limits how
 often it recompiles: a server that has served one count can fail on another with `recompile_limit reached`. Restart
 the server when the number of views changes. Available GPU memory
@@ -497,7 +498,7 @@ session. In a configuration, set `CosmosModelCfg.endpoint` to the list of endpoi
 Each session requests a frame budget, `1 + 4*k` frames per episode; the server sets no limit of its own. The
 service tells the model the episode's duration from this budget. `apply_cosmos` and the Shadow Hand presets derive it
 from the task's episode duration and actual capture cadence, including the initial capture and rounding up to
-`1 + 4*k`. Low-level camera chains must set `CosmosModelCfg.max_episode_frames` explicitly. Reset the environment
+`1 + 4*k`. Hand-written camera processors must set `CosmosModelCfg.max_episode_frames` explicitly. Reset the environment
 before that budget is exhausted; the service rejects further generation rather than silently resetting the episode.
 
 Startup logs show the budget and the captures and generated updates per second of simulation time. The model uses

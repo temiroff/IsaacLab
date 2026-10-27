@@ -3,7 +3,7 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
-"""Configuration for the Cosmos camera modifier."""
+"""Configuration for the Cosmos camera processor."""
 
 from __future__ import annotations
 
@@ -11,18 +11,18 @@ from typing import TYPE_CHECKING
 
 from isaaclab.utils import configclass
 
-from isaaclab_experimental.image_transfer import ImageTransferModifierCfg
+from isaaclab_experimental.image_transfer import ImageTransferProcessorCfg
 
 if TYPE_CHECKING:
-    from .cosmos_modifier import CosmosTransferModifier
+    from .cosmos_processor import CosmosTransferProcessor
 
 
 @configclass
-class CosmosTransferModifierCfg(ImageTransferModifierCfg):
+class CosmosTransferProcessorCfg(ImageTransferProcessorCfg):
     """Generate one initial frame, then four frames per Cosmos Sim-Transfer chunk."""
 
-    func: type[CosmosTransferModifier] | str = "{DIR}.cosmos_modifier:CosmosTransferModifier"
-    """The Cosmos camera modifier."""
+    func: type[CosmosTransferProcessor] | str = "{DIR}.cosmos_processor:CosmosTransferProcessor"
+    """The Cosmos camera processor."""
 
     initial_frames: int = 1
     """Captures required for the first chunk of an episode."""
@@ -32,3 +32,7 @@ class CosmosTransferModifierCfg(ImageTransferModifierCfg):
 
     seed: int = 42
     """Initial generation seed; full camera resets advance it deterministically."""
+
+    camera: str = ""
+    """Scene name of the processor's camera, one of :attr:`CosmosModelCfg.cameras` when cameras share a session.
+    Defaults to empty, for a camera with its own session."""

@@ -88,7 +88,7 @@ class CosmosModel:
 
         With several service endpoints, the views are split into contiguous shares of near-equal size, one per
         service in endpoint order (see :func:`split_views`). With :attr:`CosmosModelCfg.cameras`, the stream instead
-        joins the session those cameras share; the camera's modifier binds it to its camera.
+        joins the session those cameras share; the camera's processor binds it to its camera.
 
         Args:
             num_views: Number of camera views. Each service generates its share as one batch, within GPU memory and
@@ -534,8 +534,8 @@ def _scene_cameras() -> dict[str, Any]:
 class _CameraGroup:
     """Cameras that share one session; every capture generates all their environments as one batch.
 
-    Each camera's modifier queues its own controls and steps its :class:`_CameraStream` once its chunk is complete.
-    The first camera to step updates the group's other cameras, whose modifiers then add their chunks; the last one
+    Each camera's processor queues its own controls and steps its :class:`_CameraStream` once its chunk is complete.
+    The first camera to step updates the group's other cameras, whose processors then add their chunks; the last one
     runs the batched step, and every camera returns its own views of it. All cameras thus publish images of the same
     capture, so they must capture at the same steps. A failure closes the session for every camera.
     """
@@ -558,9 +558,8 @@ class _CameraGroup:
             raise ValueError("Cameras sharing a Cosmos session need the same number of environments.")
         return _CameraStream(self, seeds)
 
-    def bind(self, stream: _CameraStream, sensor: Any) -> None:
-        """Assign ``stream`` the views of its camera, found by ``sensor`` among the scene's cameras."""
-        name = next((name for name, camera in _scene_cameras().items() if camera is sensor), None)
+    def bind(self, stream: _CameraStream, name: str) -> None:
+        """Assign ``stream`` the views of the scene camera ``name``."""
         if name not in self._cameras:
             raise ValueError(
                 f"Camera {name!r} is not one of the cameras sharing this Cosmos session {list(self._cameras)}."
@@ -589,7 +588,7 @@ class _CameraGroup:
                 camera = _scene_cameras().get(name)
                 if camera is None:
                     raise ValueError(f"Scene camera {name!r} of the Cosmos session does not exist.")
-                # Reading the camera's data updates it; its modifier then adds the camera's chunk to this one.
+                # Reading the camera's data updates it; its processor then adds the camera's chunk to this one.
                 camera.data
                 if self._images is None and index not in self._chunks:
                     raise RuntimeError(
@@ -639,9 +638,9 @@ class _CameraStream:
         self.seeds = seeds
         self.index: int | None = None
 
-    def bind_sensor(self, sensor: Any) -> None:
-        """Take the views of ``sensor``, the camera whose modifier owns this stream."""
-        self._group.bind(self, sensor)
+    def bind(self, camera: str) -> None:
+        """Take the views of the scene camera ``camera``, whose processor owns this stream."""
+        self._group.bind(self, camera)
 
     def step(
         self, controls: list[torch.Tensor], reset_rows: tuple[int, ...], seeds: tuple[int, ...]

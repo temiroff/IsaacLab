@@ -29,17 +29,17 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 import torch
-from isaaclab_experimental.cosmos import CosmosModelCfg, CosmosTransferModifierCfg, _protocol
+import warp as wp
+from isaaclab_experimental.cosmos import CosmosModelCfg, CosmosTransferProcessorCfg, _protocol, depth_processor
 from isaaclab_experimental.cosmos.client import CosmosModel
 from isaaclab_experimental.cosmos.client import cosmos_model as cosmos_model_module
 from isaaclab_experimental.cosmos.client.camera import service_capabilities
 from isaaclab_experimental.cosmos.client.cosmos_model import split_views
 from isaaclab_experimental.cosmos.server import serve
-from isaaclab_experimental.image_transfer import depth_to_control
-from isaaclab_experimental.image_transfer import modifier as modifier_module
+from isaaclab_experimental.image_transfer import processor as processor_module
 
 from isaaclab.test.utils import DeviceScope, test_devices
-from isaaclab.utils.modifiers import ModifierCfg, ModifierChain
+from isaaclab.utils.warp import ProxyArray
 
 pytestmark = pytest.mark.unit
 
@@ -398,26 +398,31 @@ def test_failed_generation_is_not_retried_and_releases_the_session(cosmos_servic
         client.close()
 
 
+def _proxy(tensor: torch.Tensor) -> ProxyArray:
+    return ProxyArray(wp.from_torch(tensor.contiguous()))
+
+
 def test_camera_postprocessing_publishes_rgb_from_the_connected_service(cosmos_service, monkeypatch):
-    """The public Cosmos modifier plugs into the camera chain and owns only its client session."""
-    monkeypatch.setattr(modifier_module, "SimulationContext", SimpleNamespace(instance=lambda: None))
-    chain = ModifierChain(
-        [
-            ModifierCfg(func=depth_to_control, params={"near": 1.0, "far": 9.0}),
-            CosmosTransferModifierCfg(
-                backend=CosmosModelCfg(max_episode_frames=13, endpoint=cosmos_service.endpoint, timeout=2)
-            ),
-        ],
-        device="cpu",
+    """The public Cosmos processors run as a camera runs them and own only their client session."""
+    monkeypatch.setattr(processor_module, "SimulationContext", SimpleNamespace(instance=lambda: None))
+    cfgs = depth_processor(
+        CosmosModelCfg(max_episode_frames=13, endpoint=cosmos_service.endpoint, timeout=2), near=1.0, far=9.0
     )
+    buffers = {"distance_to_image_plane": _proxy(torch.tensor([1.0, 9.0]).reshape(1, 1, 2, 1))}
+    processors = []
     try:
-        generated = chain(torch.tensor([1.0, 9.0]).reshape(1, 1, 2, 1))
+        # Construct and run in order, as a camera does: each processor reads the outputs of the earlier ones.
+        for cfg in cfgs:
+            processors.append(cfg.func(cfg, buffers))
+            buffers.update(processors[-1](buffers))
+        generated = buffers["rgb"].torch
         assert generated.shape == (1, 1, 2, 3) and generated.dtype == torch.uint8
         assert generated[0, 0].tolist() == [[127, 127, 127], [127, 127, 127]]
         session = cosmos_service.resource.streams[0]
         assert session.steps[0][0][0][0, 0].tolist() == [[255, 255, 255], [0, 0, 0]]
     finally:
-        chain.close()
+        for processor in processors:
+            processor.close()
     assert session.closed.wait(2)
     assert not cosmos_service.resource.closed.is_set()
 
@@ -425,8 +430,9 @@ def test_camera_postprocessing_publishes_rgb_from_the_connected_service(cosmos_s
 class LazyCamera:
     """A scene camera that captures when its data is read, and only once per simulation step."""
 
-    def __init__(self, cfg, value):
-        self.chain = ModifierChain([CosmosTransferModifierCfg(backend=cfg)], device="cpu", sensor=self)
+    def __init__(self, cfg, name, value):
+        self.cfg = CosmosTransferProcessorCfg(backend=cfg, camera=name)
+        self.processor = None
         self.value = value
         self.due = False
         self.output = None
@@ -435,7 +441,11 @@ class LazyCamera:
     def data(self):
         if self.due:
             self.due = False
-            self.output = self.chain(torch.full((2, 2, 3, 3), self.value, dtype=torch.uint8))
+            buffers = {"control": _proxy(torch.full((2, 2, 3, 3), self.value, dtype=torch.uint8))}
+            # A camera constructs its processors at its first capture.
+            if self.processor is None:
+                self.processor = self.cfg.func(self.cfg, buffers)
+            self.output = self.processor(buffers)["rgb"].torch
         return self.output
 
 
@@ -450,8 +460,8 @@ def _camera_group(cosmos_service, monkeypatch):
     )
     model = CosmosModel(cfg)
     sim = SimpleNamespace(get_or_create_backend=lambda backend: model)
-    monkeypatch.setattr(modifier_module, "SimulationContext", SimpleNamespace(instance=lambda: sim))
-    cameras = {"front": LazyCamera(cfg, 10), "wrist": LazyCamera(cfg, 20)}
+    monkeypatch.setattr(processor_module, "SimulationContext", SimpleNamespace(instance=lambda: sim))
+    cameras = {"front": LazyCamera(cfg, "front", 10), "wrist": LazyCamera(cfg, "wrist", 20)}
     monkeypatch.setattr(cosmos_model_module, "_scene_cameras", lambda: cameras)
 
     def echo(stream, controls, reset_rows, seeds, **episode):
@@ -482,7 +492,7 @@ def test_cameras_sharing_a_session_generate_all_their_views_in_one_batch(cosmos_
         assert front.output[:, 0, 0, 0].tolist() == [14, 14] and wrist.output[:, 0, 0, 0].tolist() == [24, 24]
         # Environment 1 resets on both cameras and restarts with its newest control.
         for camera in (front, wrist):
-            camera.chain.reset([1])
+            camera.processor.reset([1])
         for _ in range(4):
             capture(front, wrist)
         assert front.output[:, 0, 0, 0].tolist() == [18, 18] and wrist.output[:, 0, 0, 0].tolist() == [28, 28]
@@ -494,7 +504,7 @@ def test_cameras_sharing_a_session_generate_all_their_views_in_one_batch(cosmos_
     assert session.settings["num_views"] == 4
     assert session.settings["prompt"] == ["Front 0.", "Front 1.", "Wrist 0.", "Wrist 1."]
     # A camera's view takes its environment's seed, and an environment's reset restarts it on every camera.
-    seed = CosmosTransferModifierCfg().seed
+    seed = CosmosTransferProcessorCfg().seed
     assert session.settings["seeds"] == (seed, seed + 1, seed, seed + 1)
     assert [len(controls) for controls, _, _ in session.steps] == [4, 4, 4]
     assert [int(control[0, 0, 0, 0]) for control in session.steps[0][0]] == [10, 10, 20, 20]
@@ -528,22 +538,14 @@ def test_a_camera_that_misses_a_shared_capture_fails_the_session_for_every_camer
 
 def test_incompatible_cosmos_cadence_is_rejected_before_opening_a_session(cosmos_service, monkeypatch):
     """A generic one-frame update must not open a Cosmos session that cannot consume it."""
-    monkeypatch.setattr(modifier_module, "SimulationContext", SimpleNamespace(instance=lambda: None))
-    chain = ModifierChain(
-        [
-            CosmosTransferModifierCfg(
-                backend=CosmosModelCfg(max_episode_frames=13, endpoint=cosmos_service.endpoint, timeout=2),
-                update_frames=1,
-            )
-        ],
-        device="cpu",
+    monkeypatch.setattr(processor_module, "SimulationContext", SimpleNamespace(instance=lambda: None))
+    cfg = CosmosTransferProcessorCfg(
+        backend=CosmosModelCfg(max_episode_frames=13, endpoint=cosmos_service.endpoint, timeout=2),
+        update_frames=1,
     )
-    try:
-        with pytest.raises(ValueError, match="Cosmos requires initial_frames=1 and update_frames=4"):
-            chain(torch.zeros((1, 1, 2, 3), dtype=torch.uint8))
-        assert not cosmos_service.resource.streams
-    finally:
-        chain.close()
+    with pytest.raises(ValueError, match="Cosmos requires initial_frames=1 and update_frames=4"):
+        cfg.func(cfg, {"control": _proxy(torch.zeros((1, 1, 2, 3), dtype=torch.uint8))})
+    assert not cosmos_service.resource.streams
 
 
 @pytest.mark.parametrize("window,sink", [(0, 0), (3, 3), (30, -1)])

@@ -45,9 +45,9 @@ def episode_frame_budget(env_cfg: Any, update_period: float) -> tuple[int, int, 
 class CosmosModelCfg(BackendCfg):
     """Settings for a camera's resident Cosmos service connection.
 
-    Use with :class:`~isaaclab_experimental.image_transfer.ImageTransferModifierCfg` after a depth control
-    modifier, as :func:`~isaaclab_experimental.cosmos.depth_processor` arranges. Cosmos generates an initial
-    one-frame chunk, then four-frame chunks. Configure that modifier with ``initial_frames=1`` and ``update_frames=4``.
+    Use with :class:`~isaaclab_experimental.image_transfer.ImageTransferProcessorCfg` after a depth control
+    processor, as :func:`~isaaclab_experimental.cosmos.depth_processor` arranges. Cosmos generates an initial
+    one-frame chunk, then four-frame chunks. Configure that processor with ``initial_frames=1`` and ``update_frames=4``.
     """
 
     class_type: type[CosmosModel] | str = "{DIR}.cosmos_model:CosmosModel"

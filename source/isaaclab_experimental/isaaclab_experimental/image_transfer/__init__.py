@@ -3,7 +3,7 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
-"""Application-owned image generation for camera images, applied as modifiers."""
+"""Application-owned image generation for camera images, applied as camera tensor processors."""
 
 from isaaclab.utils.module import lazy_export
 

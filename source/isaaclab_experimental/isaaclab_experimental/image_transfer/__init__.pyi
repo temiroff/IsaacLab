@@ -4,14 +4,16 @@
 # SPDX-License-Identifier: BSD-3-Clause
 
 __all__ = [
+    "FunctionProcessor",
+    "FunctionProcessorCfg",
     "ImageTransferModel",
-    "ImageTransferModifier",
-    "ImageTransferModifierCfg",
+    "ImageTransferProcessor",
+    "ImageTransferProcessorCfg",
     "ImageTransferStream",
     "depth_to_control",
     "srgb_to_linear",
 ]
 
 from .backend import ImageTransferModel, ImageTransferStream
-from .modifier import ImageTransferModifier, depth_to_control, srgb_to_linear
-from .modifier_cfg import ImageTransferModifierCfg
+from .processor import FunctionProcessor, ImageTransferProcessor, depth_to_control, srgb_to_linear
+from .processor_cfg import FunctionProcessorCfg, ImageTransferProcessorCfg

@@ -7,7 +7,7 @@
 
 from __future__ import annotations
 
-from isaaclab_experimental.cosmos import CosmosModelCfg, CosmosTransferModifierCfg, cosmos_camera, episode_frame_budget
+from isaaclab_experimental.cosmos import CosmosModelCfg, CosmosTransferProcessorCfg, cosmos_camera, episode_frame_budget
 from isaaclab_ov.renderers import OVRTXRendererCfg
 
 import isaaclab.sim as sim_utils
@@ -221,7 +221,6 @@ _COSMOS_BASE_CAMERA_CFG = _ShadowHandBaseTiledCameraCfg(data_types=["rgb"], heig
 
 SHADOW_HAND_COSMOS_CAMERA_CFG = cosmos_camera(_COSMOS_BASE_CAMERA_CFG, _COSMOS_MODEL_CFG, near=0.1, far=1.5)
 """Camera rendering depth that Cosmos turns into the published ``rgb``; captures every environment step."""
-(_COSMOS_DEPTH_INPUT,) = SHADOW_HAND_COSMOS_CAMERA_CFG.modifiers
 
 
 def shadow_hand_cosmos_settings(env_cfg) -> CosmosModelCfg:
@@ -240,15 +239,13 @@ def set_shadow_hand_cosmos_settings(env_cfg, settings: CosmosModelCfg) -> None:
     _cosmos_transfer(env_cfg).backend = settings
 
 
-def _cosmos_transfer(env_cfg) -> CosmosTransferModifierCfg:
+def _cosmos_transfer(env_cfg) -> CosmosTransferProcessorCfg:
     """Return the camera's only Cosmos step."""
     transfers = [
-        cfg
-        for cfg in env_cfg.scene.tiled_camera.modifiers.get(_COSMOS_DEPTH_INPUT, ())
-        if isinstance(cfg, CosmosTransferModifierCfg)
+        cfg for cfg in env_cfg.scene.tiled_camera.tensor_processors if isinstance(cfg, CosmosTransferProcessorCfg)
     ]
     if len(transfers) != 1:
-        raise ValueError("The Shadow Hand Cosmos preset requires one Cosmos step on the camera's depth chain.")
+        raise ValueError("The Shadow Hand Cosmos preset requires one Cosmos step among the camera's tensor processors.")
     return transfers[0]
 
 

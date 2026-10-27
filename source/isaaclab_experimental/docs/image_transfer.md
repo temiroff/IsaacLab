@@ -1,7 +1,7 @@
 # Image transfer for camera images
 
 `isaaclab_experimental.image_transfer` connects an application-owned image-generation
-model to cameras through modifiers. It does not load models, download assets, or
+model to cameras through tensor processors. It does not load models, download assets, or
 select a network transport.
 
 For a ready-made adapter with a separately started Cosmos service, see
@@ -9,24 +9,26 @@ For a ready-made adapter with a separately started Cosmos service, see
 
 ## Camera integration
 
-Add the modifiers to `CameraCfg.modifiers` under the camera output the model is
-conditioned on. The camera requests that output from its renderer, runs the chain
-once per captured image, resets it with the camera, and publishes the generated
-images under `"rgb"`:
+Add the processors to `CameraCfg.tensor_processors`. The camera requests their inputs
+that no processor produces, here `distance_to_image_plane`, from its renderer, runs the
+processors once per captured image, resets and closes them with the camera, and
+publishes the generated images under `"rgb"`:
 
 ```python
-from isaaclab.utils.modifiers import ModifierCfg
-from isaaclab_experimental.image_transfer import ImageTransferModifierCfg, depth_to_control
+from isaaclab_experimental.image_transfer import FunctionProcessorCfg, ImageTransferProcessorCfg, depth_to_control
 
 wrist_camera = CameraCfg(
     ...,
     data_types=["rgb"],
-    modifiers={
-        "distance_to_image_plane": [
-            ModifierCfg(func=depth_to_control, params={"near": 0.2, "far": 12.0}),
-            ImageTransferModifierCfg(backend=MyModelCfg(), initial_frames=1, update_frames=4),
-        ]
-    },
+    tensor_processors=[
+        FunctionProcessorCfg(
+            function=depth_to_control,
+            params={"near": 0.2, "far": 12.0},
+            inputs=["distance_to_image_plane"],
+            outputs=["control"],
+        ),
+        ImageTransferProcessorCfg(backend=MyModelCfg(), initial_frames=1, update_frames=4),
+    ],
 )
 ```
 
@@ -35,18 +37,18 @@ of one capture do not advance the model.
 
 ## Model contract
 
-`ImageTransferModifierCfg.backend` is a `BackendCfg` whose `class_type` builds an
+`ImageTransferProcessorCfg.backend` is a `BackendCfg` whose `class_type` builds an
 `ImageTransferModel`. Equal configurations share one model through
 `SimulationContext.get_or_create_backend`, so the model holds only shared resources
-such as weights. Each modifier opens its own `ImageTransferStream` with
+such as weights. Each processor opens its own `ImageTransferStream` with
 `open_stream(num_views, seeds)`; the stream holds the temporal state of its views.
-Without a simulation context, the modifier builds and owns the model.
+Without a simulation context, the processor builds and owns the model.
 
 `ImageTransferStream.step(controls, reset_rows, seeds)` receives one owned uint8
 THWC three-channel control sequence per view and returns uint8 sRGB images with
 the same sequence lengths and image size. There is no implicit crop or resize.
 Calls run on the current Torch stream; returned tensors must be ready on it.
-`close()` must be idempotent. The camera closes its modifiers, and with them
+`close()` must be idempotent. The camera closes its processors, and with them
 their streams, when it is released.
 
 ## Scheduling and resets
@@ -57,33 +59,44 @@ until the next chunk, so larger chunks add observation age as well as latency.
 Every view needs a complete chunk before a chunk is generated, and
 `max_pending_frames` bounds each view's queue.
 
+With `update_period > 0`, environments that reset at different times capture on
+different steps. The processor reads the camera's `env_mask` input and queues
+controls only for the views captured in each call.
+
 Resetting a view clears its queued controls and its visible image. Its next chunk
 uses the initial size, and `step` receives the view index and a new deterministic
 seed: view `i` starts from `seed + i`, and each reset advances it by the number of
 views, modulo `2**31`. The stream must discard all episode state for those views.
-An exception or invalid result marks the modifier as failed; recreate the camera
+An exception or invalid result marks the processor as failed; recreate the camera
 instead of retrying against a stream that may already have advanced.
-
-Camera chains process all views of each capture together.
 
 ## Control preparation
 
-Controls are prepared by modifiers earlier in the chain. `depth_to_control` maps
+Controls are prepared by processors earlier in the list. `depth_to_control` maps
 metric depth to fixed near-white, far-black controls; missing, nonfinite, and
-nonpositive depth becomes black. Any function or class modifier that returns
-uint8 `(N, H, W, 3)` controls can take its place.
+nonpositive depth becomes black. `FunctionProcessorCfg` applies any such function to
+one camera buffer; any processor that produces uint8 `(N, H, W, 3)` controls under the
+image transfer processor's first input can take its place.
 
 ## Optional PPISP
 
-Append `ModifierCfg(func=srgb_to_linear)` and `PpispModifierCfg(isp_cfg=...)` to
-the chain to apply relative camera effects to the generated images. The inverse
-sRGB transfer function does not recover scene HDR or remove a baked camera
-response; use the renderer's `rgb_radiance` for calibrated PPISP processing. The
-image transfer modifiers do not depend on PPISP.
+Name the image transfer output, convert it with `srgb_to_linear`, and add
+`PpispProcessorCfg(isp_cfg=..., inputs=[...])` to apply relative camera effects to
+the generated images:
+
+```python
+ImageTransferProcessorCfg(backend=MyModelCfg(), outputs=["generated"]),
+FunctionProcessorCfg(function=srgb_to_linear, inputs=["generated"], outputs=["generated_linear"]),
+PpispProcessorCfg(isp_cfg=PpispCfg(), inputs=["generated_linear"]),
+```
+
+The inverse sRGB transfer function does not recover scene HDR or remove a baked camera
+response; use the renderer's `rgb_hdr` for calibrated PPISP processing. The image
+transfer processors do not depend on PPISP.
 
 ## Local example and validation
 
-`examples/sensors/depth_image_processor.py` runs the chain on CPU with a small
+`examples/sensors/depth_image_processor.py` runs the processors on CPU with a small
 illustrative tint model. It requires no model or remote service:
 
 ```bash

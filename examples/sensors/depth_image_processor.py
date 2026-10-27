@@ -3,18 +3,19 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
-"""Run depth-to-image transfer as a modifier chain on CPU with an illustrative model."""
+"""Run depth-to-image transfer as camera tensor processors on CPU with an illustrative model."""
 
 import argparse
 from pathlib import Path
 
 import numpy as np
 import torch
-from isaaclab_experimental.image_transfer import ImageTransferModifierCfg, depth_to_control
+import warp as wp
+from isaaclab_experimental.image_transfer import FunctionProcessorCfg, ImageTransferProcessorCfg, depth_to_control
 
 from isaaclab.sim import BackendCfg
 from isaaclab.utils import configclass
-from isaaclab.utils.modifiers import ModifierCfg, ModifierChain
+from isaaclab.utils.warp import ProxyArray
 
 
 class TintStream:
@@ -50,24 +51,33 @@ def main():
     args = parser.parse_args()
     if args.output.exists():
         parser.error("Choose a new output file.")
-    # The same list goes into CameraCfg.modifiers under "distance_to_image_plane".
-    chain = ModifierChain(
-        [
-            ModifierCfg(func=depth_to_control, params={"near": 1.0, "far": 9.0}),
-            ImageTransferModifierCfg(backend=TintModelCfg()),
-        ],
-        "cpu",
-    )
+    # The same list goes into CameraCfg.tensor_processors; the camera renders "distance_to_image_plane".
+    cfgs = [
+        FunctionProcessorCfg(
+            function=depth_to_control,
+            params={"near": 1.0, "far": 9.0},
+            inputs=["distance_to_image_plane"],
+            outputs=["control"],
+        ),
+        ImageTransferProcessorCfg(backend=TintModelCfg()),
+    ]
+    depth = torch.linspace(1, 9, 96).view(1, 1, 96, 1).expand(1, 64, 96, 1).contiguous()
+    buffers = {"distance_to_image_plane": ProxyArray(wp.from_torch(depth))}
+    processors = []
     try:
-        depth = torch.linspace(1, 9, 96).view(1, 1, 96, 1).expand(1, 64, 96, 1)
-        rgb = chain(depth)
+        # Construct and run in order, as a camera does: each processor reads the outputs of the earlier ones.
+        for cfg in cfgs:
+            processors.append(cfg.func(cfg, buffers))
+            buffers.update(processors[-1](buffers))
+        rgb = buffers["rgb"].torch
         assert rgb[0, 0, 0].tolist() == [255, 153, 51]
         assert rgb[0, 0, -1].tolist() == [0, 0, 0]
         args.output.parent.mkdir(parents=True, exist_ok=True)
         np.savez_compressed(args.output, depth=depth.numpy(), rgb=rgb.numpy())
         print(f"Saved depth {tuple(depth.shape)} and RGB {tuple(rgb.shape)} to {args.output}")
     finally:
-        chain.close()
+        for processor in processors:
+            processor.close()
 
 
 if __name__ == "__main__":

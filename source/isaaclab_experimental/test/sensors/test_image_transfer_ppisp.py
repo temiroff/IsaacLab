@@ -3,21 +3,26 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
-"""PPISP applied after image transfer in one modifier chain."""
+"""PPISP applied after image transfer in one camera processor chain."""
 
 from types import SimpleNamespace
 
 import pytest
 import torch
-from isaaclab_experimental.image_transfer import ImageTransferModifierCfg, depth_to_control, srgb_to_linear
-from isaaclab_experimental.image_transfer import modifier as modifier_module
+import warp as wp
+from isaaclab_experimental.image_transfer import (
+    FunctionProcessorCfg,
+    ImageTransferProcessorCfg,
+    depth_to_control,
+    srgb_to_linear,
+)
+from isaaclab_experimental.image_transfer import processor as processor_module
 
 from isaaclab.sim import BackendCfg
 from isaaclab.utils import configclass
-from isaaclab.utils.modifiers import ModifierCfg, ModifierChain
+from isaaclab.utils.warp import ProxyArray
 
 ppisp = pytest.importorskip("isaaclab_ppisp")
-from isaaclab_ppisp import modifier as ppisp_modifier_module  # noqa: E402
 
 
 class _PassThroughStream:
@@ -52,22 +57,29 @@ pytestmark = [
 
 @pytest.fixture(autouse=True)
 def no_sim(monkeypatch):
-    for module in (modifier_module, ppisp_modifier_module):
-        monkeypatch.setattr(module, "SimulationContext", SimpleNamespace(instance=lambda: None))
+    monkeypatch.setattr(processor_module, "SimulationContext", SimpleNamespace(instance=lambda: None))
 
 
 def _generate(exposure_offset: float) -> torch.Tensor:
-    depth = torch.linspace(1.0, 9.0, 8, device="cuda:0").view(1, 1, 8, 1).expand(2, 4, 8, 1)
-    chain = ModifierChain(
-        [
-            ModifierCfg(func=depth_to_control, params={"near": 1.0, "far": 9.0}),
-            ImageTransferModifierCfg(backend=_PassThroughModelCfg()),
-            ModifierCfg(func=srgb_to_linear),
-            ppisp.PpispModifierCfg(isp_cfg=ppisp.PpispCfg(inputs={"exposureOffset": exposure_offset})),
-        ],
-        "cuda:0",
-    )
-    return chain(depth).clone()
+    depth = torch.linspace(1.0, 9.0, 8, device="cuda:0").view(1, 1, 8, 1).expand(2, 4, 8, 1).contiguous()
+    buffers = {"distance_to_image_plane": ProxyArray(wp.from_torch(depth))}
+    cfgs = [
+        FunctionProcessorCfg(
+            function=depth_to_control,
+            params={"near": 1.0, "far": 9.0},
+            inputs=["distance_to_image_plane"],
+            outputs=["control"],
+        ),
+        ImageTransferProcessorCfg(backend=_PassThroughModelCfg(), outputs=["generated"]),
+        FunctionProcessorCfg(function=srgb_to_linear, inputs=["generated"], outputs=["generated_linear"]),
+        ppisp.PpispProcessorCfg(
+            isp_cfg=ppisp.PpispCfg(inputs={"exposureOffset": exposure_offset}), inputs=["generated_linear"]
+        ),
+    ]
+    # Construct and run in order, as a camera does: each processor reads the outputs of the earlier ones.
+    for cfg in cfgs:
+        buffers.update(cfg.func(cfg, buffers)(buffers))
+    return buffers["rgb"].torch.clone()
 
 
 def test_ppisp_after_image_transfer_produces_8bit_rgb_with_relative_exposure():

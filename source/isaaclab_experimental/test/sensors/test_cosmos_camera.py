@@ -7,7 +7,8 @@
 
 import pytest
 import torch
-from isaaclab_experimental.cosmos import CosmosModelCfg, CosmosTransferModifierCfg, cosmos_camera
+from isaaclab_experimental.cosmos import CosmosModelCfg, CosmosTransferProcessorCfg, cosmos_camera
+from isaaclab_experimental.image_transfer import FunctionProcessorCfg
 
 import isaaclab.sim as sim_utils
 from isaaclab.sensors import CameraCfg
@@ -39,12 +40,13 @@ def test_cosmos_camera_renders_a_canvas_with_the_same_view_and_publishes_the_ori
     """The canvas keeps the camera's aspect ratio; the published crop sees what the camera saw."""
     width, height = size
     camera = cosmos_camera(_camera(width, height), CosmosModelCfg(), near=0.2, far=1.5)
-    chain = camera.modifiers["distance_to_image_plane"]
+    chain = camera.tensor_processors
 
     assert (camera.width, camera.height) == canvas
-    assert camera.render_data_types() == ["distance_to_image_plane"]
-    assert camera.modifier_outputs() == {"distance_to_image_plane": "rgb"}
-    assert chain[0].params == {"near": 0.2, "far": 1.5} and isinstance(chain[1], CosmosTransferModifierCfg)
+    # The renderer produces depth; the processors produce the published rgb.
+    assert chain[0].inputs == ["distance_to_image_plane"] and chain[-1].outputs == ["rgb"]
+    assert isinstance(chain[0], FunctionProcessorCfg) and chain[0].params == {"near": 0.2, "far": 1.5}
+    assert isinstance(chain[1], CosmosTransferProcessorCfg) and chain[1].inputs == ["control", "env_mask"]
     # Square pixels: apertures scale with the canvas, and the crop covers the original apertures.
     pixel = camera.spawn.horizontal_aperture / canvas[0]
     assert camera.spawn.vertical_aperture == pytest.approx(pixel * canvas[1])
@@ -60,7 +62,7 @@ def test_cosmos_camera_renders_a_canvas_with_the_same_view_and_publishes_the_ori
         assert len(chain) == 2
         published = generated
     else:
-        published = chain[2].func(generated, **chain[2].params)
+        published = chain[2].function(generated, **chain[2].params)
     assert published.shape == (2, height, width, 3)
     assert published.dtype == torch.uint8 and published.device == generated.device
     assert published.is_contiguous()
@@ -70,7 +72,8 @@ def test_cosmos_camera_renders_a_canvas_with_the_same_view_and_publishes_the_ori
 def test_cosmos_camera_rejects_cameras_it_cannot_reproduce():
     with pytest.raises(ValueError, match="only 'rgb'"):
         cosmos_camera(_camera(64, 64).replace(data_types=["rgb", "depth"]), CosmosModelCfg())
-    with pytest.raises(ValueError, match="already has modifiers"):
-        cosmos_camera(_camera(64, 64, modifiers={"rgb": []}), CosmosModelCfg())
+    existing = FunctionProcessorCfg(function=torch.clone, inputs=["rgb"], outputs=["rgb"])
+    with pytest.raises(ValueError, match="already has tensor processors"):
+        cosmos_camera(_camera(64, 64, tensor_processors=[existing]), CosmosModelCfg())
     with pytest.raises(ValueError, match="fisheye"):
         cosmos_camera(_camera(64, 64, spawn=sim_utils.FisheyeCameraCfg()), CosmosModelCfg())

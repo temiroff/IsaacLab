@@ -6,8 +6,8 @@
 __all__ = [
     "CosmosModel",
     "CosmosModelCfg",
-    "CosmosTransferModifier",
-    "CosmosTransferModifierCfg",
+    "CosmosTransferProcessor",
+    "CosmosTransferProcessorCfg",
     "apply_cosmos",
     "cosmos_camera",
     "depth_processor",
@@ -18,8 +18,8 @@ __all__ = [
 from .client import (
     CosmosModel,
     CosmosModelCfg,
-    CosmosTransferModifier,
-    CosmosTransferModifierCfg,
+    CosmosTransferProcessor,
+    CosmosTransferProcessorCfg,
     apply_cosmos,
     cosmos_camera,
     depth_processor,
