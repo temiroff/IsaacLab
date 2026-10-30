@@ -11,6 +11,8 @@ import gymnasium as gym
 import pytest
 from isaaclab_experimental.cosmos import CosmosTransferProcessorCfg, read_prompt_files
 
+from isaaclab.utils.string import resolve_matching_names, resolve_matching_names_values
+
 import isaaclab_tasks  # noqa: F401
 from isaaclab_tasks.contrib.apple_pick_place.apple_pick_place_g1_dex3_env_cfg import (
     START_STATES_FILE,
@@ -123,3 +125,15 @@ def test_backends_are_selected_with_presets(overrides, physics, renderer):
     cfg = parse_env_cfg("IsaacContrib-PickPlace-Apple-G1-Dex3", overrides=overrides)
     assert type(cfg.sim.physics).__name__ == physics
     assert type(cfg.scene.head_camera.renderer_cfg).__name__ == renderer
+
+
+def test_each_actuator_value_pattern_matches_a_joint_once():
+    """Per-joint actuator values resolve without overlapping patterns, as the actuators do at spawn."""
+    with open(START_STATES_FILE) as f:
+        joint_names = json.load(f)["joint_names"]
+    for name, actuator in G1ApplePickPlaceEnvCfg().scene.robot.actuators.items():
+        _, names = resolve_matching_names(actuator.joint_names_expr, joint_names)
+        assert names, name
+        for field, value in vars(actuator).items():
+            if isinstance(value, dict):
+                resolve_matching_names_values(value, names)

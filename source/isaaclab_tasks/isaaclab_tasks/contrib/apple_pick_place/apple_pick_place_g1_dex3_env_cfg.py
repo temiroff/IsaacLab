@@ -193,7 +193,10 @@ G1_DEX3_CFG = ArticulationCfg(
             joint_names_expr=[".*_hand_.*_joint"],
             stiffness=4.0,
             damping=0.5,
-            actuator_effort_limit={".*_hand_.*_joint": 1.4, ".*_hand_thumb_0_joint": 2.45},
+            actuator_effort_limit={
+                ".*_hand_(index_[01]|middle_[01]|thumb_[12])_joint": 1.4,
+                ".*_hand_thumb_0_joint": 2.45,
+            },
             actuator_velocity_limit=10.0,
         ),
     },
