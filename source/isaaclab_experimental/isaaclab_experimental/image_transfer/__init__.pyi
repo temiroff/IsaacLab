@@ -11,9 +11,8 @@ __all__ = [
     "ImageTransferProcessorCfg",
     "ImageTransferStream",
     "depth_to_control",
-    "srgb_to_linear",
 ]
 
 from .backend import ImageTransferModel, ImageTransferStream
-from .processor import FunctionProcessor, ImageTransferProcessor, depth_to_control, srgb_to_linear
+from .processor import FunctionProcessor, ImageTransferProcessor, depth_to_control
 from .processor_cfg import FunctionProcessorCfg, ImageTransferProcessorCfg

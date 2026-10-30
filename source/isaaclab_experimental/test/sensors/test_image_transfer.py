@@ -14,7 +14,6 @@ from isaaclab_experimental.image_transfer import (
     FunctionProcessorCfg,
     ImageTransferProcessorCfg,
     depth_to_control,
-    srgb_to_linear,
 )
 from isaaclab_experimental.image_transfer import processor as processor_module
 
@@ -202,14 +201,6 @@ def test_depth_controls_feed_image_transfer(no_sim):
     assert output[0, 0, :, 0].tolist() == [0, 255, 255, 255]
     with pytest.raises(ValueError, match="near < far"):
         depth_to_control(depth, near=2.0, far=1.0)
-
-
-def test_srgb_to_linear_inverts_the_srgb_transfer_function():
-    srgb = torch.tensor([0, 10, 128, 255], dtype=torch.uint8).view(1, 1, 4, 1).expand(1, 1, 4, 3)
-
-    linear = srgb_to_linear(srgb)
-
-    torch.testing.assert_close(linear[0, 0, :, 0], torch.tensor([0.0, 0.0030353, 0.2158605, 1.0]))
 
 
 def test_a_view_resetting_mid_chunk_joins_the_next_chunk_and_queues_stay_bounded(no_sim):

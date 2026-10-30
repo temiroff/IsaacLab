@@ -78,22 +78,6 @@ nonpositive depth becomes black. `FunctionProcessorCfg` applies any such functio
 one camera buffer; any processor that produces uint8 `(N, H, W, 3)` controls under the
 image transfer processor's first input can take its place.
 
-## Optional PPISP
-
-Name the image transfer output, convert it with `srgb_to_linear`, and add
-`PpispProcessorCfg(isp_cfg=..., inputs=[...])` to apply relative camera effects to
-the generated images:
-
-```python
-ImageTransferProcessorCfg(backend=MyModelCfg(), outputs=["generated"]),
-FunctionProcessorCfg(function=srgb_to_linear, inputs=["generated"], outputs=["generated_linear"]),
-PpispProcessorCfg(isp_cfg=PpispCfg(), inputs=["generated_linear"]),
-```
-
-The inverse sRGB transfer function does not recover scene HDR or remove a baked camera
-response; use the renderer's `rgb_hdr` for calibrated PPISP processing. The image
-transfer processors do not depend on PPISP.
-
 ## Local example and validation
 
 `examples/sensors/depth_image_processor.py` runs the processors on CPU with a small

@@ -230,22 +230,6 @@ def depth_to_control(data: torch.Tensor, near: float = 0.1, far: float = 10.0) -
     return pixels.expand(*pixels.shape[:-1], 3)
 
 
-def srgb_to_linear(data: torch.Tensor) -> torch.Tensor:
-    """Approximate scene-linear color from display sRGB, for example before PPISP.
-
-    The inverse sRGB transfer function does not recover scene HDR, exposure, or a baked camera
-    response. Use the renderer's ``rgb_hdr`` for calibrated camera processing.
-
-    Args:
-        data: sRGB of shape ``(N, H, W, 3)``, dtype uint8.
-
-    Returns:
-        Linear color of shape ``(N, H, W, 3)``, dtype float32.
-    """
-    value = data.to(torch.float32) / 255.0
-    return torch.where(value > 0.04045, ((value + 0.055) / 1.055) ** 2.4, value / 12.92)
-
-
 def _validate(cfg: ImageTransferProcessorCfg, data_dim: tuple[int, ...]) -> None:
     if len(data_dim) != 4 or data_dim[-1] != 3:
         raise ValueError(f"Image transfer expects controls with shape (N, H, W, 3), got {data_dim}.")
