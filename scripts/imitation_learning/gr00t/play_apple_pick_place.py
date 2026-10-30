@@ -37,17 +37,24 @@ parser.add_argument("--task", type=str, default="IsaacContrib-PickPlace-Apple-G1
 parser.add_argument("--policy_host", type=str, default="127.0.0.1", help="Host running the GR00T policy server.")
 parser.add_argument("--policy_port", type=int, default=5555, help="Port of the GR00T policy server.")
 parser.add_argument("--num_episodes", type=int, default=10, help="Number of episodes to run.")
+parser.add_argument(
+    "--save_frames", type=str, default=None, help="Directory to save the first environment's head camera images to."
+)
+parser.add_argument("--frame_interval", type=int, default=30, help="Steps between saved images.")
 add_launcher_args(parser)
 args_cli, hydra_args = setup_preset_cli(parser)
 # the policy reads the head camera image
 args_cli.enable_cameras = True
 sys.argv = [sys.argv[0]] + hydra_args
 
+import os
+
 import gymnasium as gym
 import msgpack
 import numpy as np
 import torch
 import zmq
+from PIL import Image
 
 import isaaclab_tasks  # noqa: F401
 
@@ -113,12 +120,22 @@ def task_actions(chunk: dict[str, np.ndarray], device: str) -> torch.Tensor:
     return torch.as_tensor(np.concatenate(positions + efforts, axis=-1), dtype=torch.float32, device=device)
 
 
+def save_frame(obs: dict[str, torch.Tensor], index: int):
+    """Save the first environment's head camera image, the one the policy sees."""
+    os.makedirs(args_cli.save_frames, exist_ok=True)
+    image = obs["ego_view"][0].to(torch.uint8).cpu().numpy()
+    Image.fromarray(image).save(os.path.join(args_cli.save_frames, f"frame_{index:05d}.png"))
+
+
 def main():
     env_cfg, _ = resolve_task_config(args_cli.task, "")
     with launch_simulation(env_cfg, args_cli):
         env = gym.make(args_cli.task, cfg=env_cfg)
         policy = PolicyClient(args_cli.policy_host, args_cli.policy_port)
         obs, _ = env.reset()
+        frames = 0
+        if args_cli.save_frames:
+            save_frame(obs["policy"], frames)
         actions, step = None, 0
         episodes = successes = 0
         while episodes < args_cli.num_episodes and env.unwrapped.sim.is_running():
@@ -129,6 +146,9 @@ def main():
             with torch.inference_mode():
                 obs, _, terminated, truncated, _ = env.step(actions[:, step])
             step += 1
+            frames += 1
+            if args_cli.save_frames and frames % args_cli.frame_interval == 0:
+                save_frame(obs["policy"], frames)
             done = terminated | truncated
             if done.any():
                 succeeded = env.unwrapped.termination_manager.get_term("success")[done]
