@@ -14,7 +14,7 @@ head camera's rendered image with one Cosmos generates from its depth.
 import os
 
 from isaaclab_experimental.cosmos import CosmosModelCfg, CosmosTransferProcessorCfg, cosmos_camera, episode_frame_budget
-from isaaclab_physx.sim.schemas import PhysxArticulationCfg, PhysxRigidBodyCfg
+from isaaclab_physx.sim.schemas import PhysxArticulationCfg, PhysxConvexDecompositionCfg, PhysxRigidBodyCfg
 
 import isaaclab.envs.mdp as base_mdp
 import isaaclab.sim as sim_utils
@@ -87,7 +87,10 @@ RIGHT_HAND_ACTION = [name.replace("left_", "right_") for name in LEFT_HAND_ACTIO
 # Joints the policy commands, in the order of its outputs: positions, then the same joints' feedforward efforts.
 ACTION_JOINTS = LEFT_ARM + RIGHT_ARM + LEFT_HAND_ACTION + RIGHT_HAND_ACTION + WAIST
 
-# Start pose of the evaluation: the robot's first frame in a recorded real demonstration.
+# Saved starts of 16 recorded real demonstrations: robot, apple and plate poses. Environment i takes start i.
+START_STATES_FILE = os.path.join(os.path.dirname(__file__), "start_states.json")
+
+# Default start pose: the robot's first frame in a recorded real demonstration.
 START_JOINT_POS = {
     "left_hip_pitch_joint": -0.4573,
     "right_hip_pitch_joint": -0.4683,
@@ -191,9 +194,10 @@ G1_DEX3_CFG = ArticulationCfg(
 )
 
 
-# Placed like the robot's head camera in the real demonstrations.
+# Placed like the robot's head camera in the real demonstrations: offset from the robot's head, but held still at
+# the pose of each environment's first reset (see ``reset_fixed_head_camera``), so it is not a child of the robot.
 HEAD_CAMERA_CFG = CameraCfg(
-    prim_path="{ENV_REGEX_NS}/Robot/head_link/RobotHeadCam",
+    prim_path="{ENV_REGEX_NS}/HeadCamera",
     offset=CameraCfg.OffsetCfg(
         pos=(0.04485, 0.0, 0.35325), rot=(-0.62721, 0.62721, -0.32651, 0.32651), convention="ros"
     ),
@@ -216,12 +220,14 @@ class ApplePickPlaceSceneCfg(InteractiveSceneCfg):
         spawn=sim_utils.UsdFileCfg(usd_path=f"{ISAACLAB_NUCLEUS_DIR}/Environments/E2E_RA_Warehouse/warehouse.usd"),
     )
 
-    # Scaled down to the size of the table in the real demonstrations.
+    # Scaled down to the size of the table in the real demonstrations, with its colliders shrink-wrapped.
     table = AssetBaseCfg(
         prim_path="{ENV_REGEX_NS}/Table",
         init_state=AssetBaseCfg.InitialStateCfg(pos=(0.6163, 0.0788, 0.0411), rot=(0.0, 0.0, 0.5486, 0.8361)),
         spawn=sim_utils.UsdFileCfg(
-            usd_path=f"{ISAACLAB_NUCLEUS_DIR}/Objects/Table/table.usd", scale=(0.5, 0.9125, 1.0)
+            usd_path=f"{ISAACLAB_NUCLEUS_DIR}/Objects/Table/table.usd",
+            scale=(0.5, 0.9125, 1.0),
+            mesh_collision_props=PhysxConvexDecompositionCfg(shrink_wrap=True),
         ),
     )
 
@@ -258,12 +264,14 @@ class ApplePickPlaceSceneCfg(InteractiveSceneCfg):
 
 @configclass
 class ActionsCfg:
-    """Joint position targets with feedforward efforts on the arms, hands and waist."""
+    """Joint position targets with feedforward efforts on the arms, hands and waist; the legs are held up."""
 
     joint_pos = base_mdp.JointPositionActionCfg(
         asset_name="robot", joint_names=ACTION_JOINTS, preserve_order=True, use_default_offset=False
     )
     joint_effort = base_mdp.JointEffortActionCfg(asset_name="robot", joint_names=ACTION_JOINTS, preserve_order=True)
+    # The policy leaves the legs at their start pose; gravity compensation keeps the PD from sagging.
+    leg_gravity = mdp.GravityCompensationActionCfg(asset_name="robot", joint_names=LEFT_LEG + RIGHT_LEG)
 
 
 def _joints(names: list[str]) -> dict:
@@ -295,9 +303,14 @@ class ObservationsCfg:
 
 @configclass
 class EventCfg:
-    """Restore the start pose, with the fingertip and apple friction of the evaluation."""
+    """Start from the saved starts, with the fingertip and apple friction of the evaluation."""
 
     reset_scene = EventTerm(func=base_mdp.reset_scene_to_default, mode="reset")
+    reset_to_start_states = EventTerm(
+        func=mdp.reset_to_start_states, mode="reset", params={"states_file": START_STATES_FILE}
+    )
+    # After the start is set, so the camera is placed from the robot's start pose.
+    reset_head_camera = EventTerm(func=mdp.reset_fixed_head_camera, mode="reset")
 
     right_hand_friction = EventTerm(
         func=base_mdp.randomize_rigid_body_material,

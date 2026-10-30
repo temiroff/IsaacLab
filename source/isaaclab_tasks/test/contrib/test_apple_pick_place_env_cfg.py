@@ -5,12 +5,15 @@
 
 """The apple task's terms follow the evaluated GR00T policy's inputs and outputs."""
 
+import json
+
 import gymnasium as gym
 import pytest
 from isaaclab_experimental.cosmos import CosmosTransferProcessorCfg, read_prompt_files
 
 import isaaclab_tasks  # noqa: F401
 from isaaclab_tasks.contrib.apple_pick_place.apple_pick_place_g1_dex3_env_cfg import (
+    START_STATES_FILE,
     G1ApplePickPlaceCosmosEnvCfg,
     G1ApplePickPlaceEnvCfg,
 )
@@ -67,3 +70,41 @@ def test_cosmos_preset_generates_the_head_camera_image_for_whole_episodes():
     assert "apple" in read_prompt_files([model.prompt_files])[0]
     # The default task keeps the rendered image.
     assert not G1ApplePickPlaceEnvCfg().scene.head_camera.tensor_processors
+
+
+def test_saved_starts_cover_every_robot_joint_and_reset_each_environment():
+    cfg = G1ApplePickPlaceEnvCfg()
+    assert cfg.events.reset_to_start_states.params["states_file"] == START_STATES_FILE
+    with open(START_STATES_FILE) as f:
+        data = json.load(f)
+    robot = cfg.scene.robot
+    assert len(data["joint_names"]) == len(set(data["joint_names"])) == 43
+    # Every joint the policy reads is set by each saved start.
+    observed = [
+        name
+        for term in ("left_leg", "right_leg", "waist", "left_arm", "right_arm", "left_hand", "right_hand")
+        for name in getattr(cfg.observations.policy, term).params["asset_cfg"].joint_names
+    ]
+    assert sorted(data["joint_names"]) == sorted(observed)
+    assert len(data["states"]) == 16
+    for state in data["states"]:
+        assert len(state["joint_positions"]) == 43
+        # Each pose is a position and an xyzw quaternion of unit length.
+        for key in ("robot_root_pose", "apple_pose", "plate_pose"):
+            assert len(state[key]) == 7
+            assert sum(x * x for x in state[key][3:]) == pytest.approx(1.0, abs=1e-4)
+    assert robot.init_state.joint_pos  # the default start still applies to anything the saved starts omit
+
+
+def test_evaluation_setup_is_native_isaac_lab():
+    cfg = G1ApplePickPlaceEnvCfg()
+    # The legs are not commanded by the policy; gravity compensation holds them up without adding policy actions.
+    legs = cfg.actions.leg_gravity.joint_names
+    assert len(legs) == 12 and all(("hip" in n or "knee" in n or "ankle" in n) for n in legs)
+    assert not set(legs) & set(cfg.actions.joint_pos.joint_names)
+    # The head camera is held still, so it is not a child of the robot, and it is placed after the robot's start.
+    assert "/Robot/" not in cfg.scene.head_camera.prim_path
+    events = [name for name, term in vars(cfg.events).items() if hasattr(term, "func")]
+    assert events.index("reset_head_camera") > events.index("reset_to_start_states")
+    # The table's colliders are shrink-wrapped.
+    assert cfg.scene.table.spawn.mesh_collision_props.shrink_wrap is True
