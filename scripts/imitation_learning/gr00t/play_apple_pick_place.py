@@ -18,7 +18,7 @@ Then run the task. No window opens unless a visualizer is selected with ``--viz`
 
 .. code-block:: bash
 
-    uv run --with msgpack==1.2.3 --with pyzmq==27.2.0 \\
+    uv run --extra isaacsim --with msgpack==1.2.3 --with pyzmq==27.2.0 \\
         python scripts/imitation_learning/gr00t/play_apple_pick_place.py --num_episodes 4
 """
 

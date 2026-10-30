@@ -60,7 +60,7 @@ Install the GR00T environment, which needs Python 3.10, and download the apple p
 
 ```bash
 cd "$GR00T_ROOT"
-uv sync --python 3.10
+uv sync --python 3.10 --frozen
 uv run hf download nvidia/GR00T-N1.7-AppleToPlate-cosine40k-checkpoint-15000 \
   --local-dir "$GR00T_CHECKPOINT"
 ```
@@ -82,13 +82,14 @@ Wait until the server reports that it is ready. Leave this terminal running.
 
 ## 5. Run the task in terminal 2
 
-Run the task with the rendered camera image first. It needs only the GR00T server. The two
-`--with` options add the messaging libraries the client uses, and no window opens unless you
+Run the task with the rendered camera image first. It needs only the GR00T server. The task
+uses the PhysX backend and RTX rendering, so `--extra isaacsim` installs Isaac Sim; the two
+`--with` options add the messaging libraries the client uses. No window opens unless you
 select a visualizer with `--viz`:
 
 ```bash
 cd "$ISAAC_LAB"
-uv run --with msgpack==1.2.3 --with pyzmq==27.2.0 \
+uv run --extra isaacsim --with msgpack==1.2.3 --with pyzmq==27.2.0 \
   python scripts/imitation_learning/gr00t/play_apple_pick_place.py --num_episodes 4
 ```
 
@@ -104,7 +105,7 @@ wait for `Cosmos ready at ...`, and then add `presets=cosmos`:
 ```bash
 cd "$ISAAC_LAB"
 uv run isaaclab cosmos status
-uv run --with msgpack==1.2.3 --with pyzmq==27.2.0 \
+uv run --extra isaacsim --with msgpack==1.2.3 --with pyzmq==27.2.0 \
   python scripts/imitation_learning/gr00t/play_apple_pick_place.py --num_episodes 4 presets=cosmos
 ```
 
@@ -120,10 +121,10 @@ policy sees, as PNG files, one at the start and then every `--frame_interval` st
 default, one second of simulation):
 
 ```bash
-uv run --with msgpack==1.2.3 --with pyzmq==27.2.0 \
+uv run --extra isaacsim --with msgpack==1.2.3 --with pyzmq==27.2.0 \
   python scripts/imitation_learning/gr00t/play_apple_pick_place.py \
   --num_episodes 1 --save_frames outputs/apple_rtx
-uv run --with msgpack==1.2.3 --with pyzmq==27.2.0 \
+uv run --extra isaacsim --with msgpack==1.2.3 --with pyzmq==27.2.0 \
   python scripts/imitation_learning/gr00t/play_apple_pick_place.py \
   --num_episodes 1 --save_frames outputs/apple_cosmos presets=cosmos
 ```
