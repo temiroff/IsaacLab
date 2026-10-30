@@ -85,9 +85,14 @@ Wait until the server reports that it is ready. Leave this terminal running.
 Run the task with the rendered camera image first. It needs only the GR00T server. The task
 uses the PhysX backend and RTX rendering, so `--extra isaacsim` installs Isaac Sim; the two
 `--with` options add the messaging libraries the client uses. No window opens unless you
-select a visualizer with `--viz`:
+select a visualizer with `--viz`. Isaac Sim requires you to accept its
+[license agreement](https://docs.omniverse.nvidia.com/platform/latest/common/NVIDIA_Omniverse_License_Agreement.html)
+before a headless launch; after reviewing it, set `OMNI_KIT_ACCEPT_EULA=YES`. On a host
+without a screen, run `unset DISPLAY` first, or the launch can fail with `GLXBadFBConfig`:
 
 ```bash
+unset DISPLAY
+export OMNI_KIT_ACCEPT_EULA=YES
 cd "$ISAAC_LAB"
 uv run --extra isaacsim --with msgpack==1.2.3 --with pyzmq==27.2.0 \
   python scripts/imitation_learning/gr00t/play_apple_pick_place.py --num_episodes 4
