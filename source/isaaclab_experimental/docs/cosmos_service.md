@@ -5,8 +5,8 @@ separate terminal and connect its camera to the service. The server keeps the mo
 loaded between camera sessions. See [Cosmos camera integration](cosmos.md) for the
 Isaac Lab configuration and training commands.
 
-For the demo's tested private Framework revision and a complete setup-to-recording
-sequence, see the [Cosmos Transfer demo walkthrough](cosmos_transfer.md).
+For a complete setup-to-recording sequence, see the
+[Cosmos Transfer demo walkthrough](cosmos_transfer.md).
 
 The server uses Cosmos Framework for inference and the standalone `isaaclab-cosmos`
 package for the camera-session protocol. Installing this package requires only the
@@ -37,7 +37,7 @@ The checkpoint directory must contain the weights and complete model configurati
 metadata, including a `config.json` with a `model` section for an unregistered HF
 export. Its model classes and configuration aliases must be understood by the
 selected Framework revision. Some exports contain causal-model aliases missing
-from the public loader; an `Unknown Cosmos target alias` or `Unknown Cosmos type
+from older Framework revisions; an `Unknown Cosmos target alias` or `Unknown Cosmos type
 alias` error means the provider must supply compatible metadata or a matching
 Framework revision. Installing the service package does not convert the checkpoint.
 
@@ -92,9 +92,6 @@ From the Framework checkout, download the complete checkpoint into
 uv run --no-sync hf download nvidia/Cosmos3-Nano-Sim-Transfer \
   --local-dir "$COSMOS_CHECKPOINT"
 ```
-
-If authentication is required, run `uv run --no-sync hf auth login` with an account
-that has access to the model repository.
 
 ## Start Cosmos
 

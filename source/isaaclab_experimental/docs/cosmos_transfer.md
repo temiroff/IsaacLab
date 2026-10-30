@@ -1,9 +1,9 @@
 # Cosmos Transfer demo setup and training
 
 Run the Shadow Hand camera task with Cosmos3-Nano-Sim-Transfer using the setup below.
-The revisions below record the demo's tested configuration. The Framework checkout
-is private and requires repository access; the checkpoint requires access to
-[nvidia/Cosmos3-Nano-Sim-Transfer](https://huggingface.co/nvidia/Cosmos3-Nano-Sim-Transfer).
+It uses the public [Cosmos Framework](https://github.com/NVIDIA/cosmos-framework) and the
+public [nvidia/Cosmos3-Nano-Sim-Transfer](https://huggingface.co/nvidia/Cosmos3-Nano-Sim-Transfer)
+checkpoint.
 
 Use **uv 0.11.29** for the Framework environment. Keep the Cosmos Framework and
 Isaac Lab environments separate. The demo requires **48 GB of VRAM for one
@@ -28,15 +28,15 @@ In each new terminal, set the same three variables to those absolute paths befor
 changing directories. Repeating the block from a different directory would select
 different paths.
 
-## 2. Clone the tested revisions
+## 2. Clone the repositories
 
-Clone the experimental Isaac Lab branch and select the demo revision:
+Clone Isaac Lab:
 
 ```bash
-git clone -b exp/cosmos https://github.com/isaac-sim/IsaacLab.git "$ISAAC_LAB"
+git clone https://github.com/isaac-sim/IsaacLab.git "$ISAAC_LAB"
 ```
 
-Clone the private Cosmos Framework variant and select its matching revision:
+Clone Cosmos Framework:
 
 ```bash
 git clone https://github.com/NVIDIA/cosmos-framework.git "$COSMOS_FRAMEWORK"
@@ -54,9 +54,7 @@ uv run --no-sync uv pip install -e \
   "$ISAAC_LAB/source/isaaclab_experimental/isaaclab_experimental/cosmos"
 ```
 
-Download the complete checkpoint. This command uses the Framework environment's
-Hugging Face CLI; if authentication is required, run `uv run --no-sync hf auth login`
-with an account that has model access first.
+Download the complete checkpoint with the Framework environment's Hugging Face CLI:
 
 ```bash
 uv run --no-sync hf download nvidia/Cosmos3-Nano-Sim-Transfer \
