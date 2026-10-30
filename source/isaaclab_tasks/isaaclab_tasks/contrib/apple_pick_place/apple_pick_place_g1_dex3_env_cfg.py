@@ -7,9 +7,13 @@
 
 The scene, start pose, actuator gains and timing reproduce the evaluation of a GR00T N1.7 policy fine-tuned on
 real demonstrations of this task. The observation and action terms are named and ordered like that policy's
-inputs and outputs, so its exported pipeline can read and write them by name.
+inputs and outputs, so its exported pipeline can read and write them by name. ``presets=cosmos`` replaces the
+head camera's rendered image with one Cosmos generates from its depth.
 """
 
+import os
+
+from isaaclab_experimental.cosmos import CosmosModelCfg, CosmosTransferProcessorCfg, cosmos_camera, episode_frame_budget
 from isaaclab_physx.sim.schemas import PhysxArticulationCfg, PhysxRigidBodyCfg
 
 import isaaclab.envs.mdp as base_mdp
@@ -28,6 +32,7 @@ from isaaclab.utils import configclass
 from isaaclab.utils.assets import ISAACLAB_NUCLEUS_DIR
 
 from isaaclab_tasks.contrib.apple_pick_place import mdp
+from isaaclab_tasks.utils import PresetCfg
 
 # Joint groups in the order of the policy's state inputs.
 LEFT_LEG = [
@@ -186,6 +191,19 @@ G1_DEX3_CFG = ArticulationCfg(
 )
 
 
+# Placed like the robot's head camera in the real demonstrations.
+HEAD_CAMERA_CFG = CameraCfg(
+    prim_path="{ENV_REGEX_NS}/Robot/head_link/RobotHeadCam",
+    offset=CameraCfg.OffsetCfg(
+        pos=(0.04485, 0.0, 0.35325), rot=(-0.62721, 0.62721, -0.32651, 0.32651), convention="ros"
+    ),
+    data_types=["rgb"],
+    width=640,
+    height=480,
+    spawn=sim_utils.PinholeCameraCfg(focal_length=15.0, clipping_range=(0.1, 5.0)),
+)
+
+
 @configclass
 class ApplePickPlaceSceneCfg(InteractiveSceneCfg):
     """Warehouse, table, apple and plate in front of the robot."""
@@ -235,17 +253,7 @@ class ApplePickPlaceSceneCfg(InteractiveSceneCfg):
         filter_prim_paths_expr=["{ENV_REGEX_NS}/Plate"],
     )
 
-    # Placed like the robot's head camera in the real demonstrations.
-    head_camera = CameraCfg(
-        prim_path="{ENV_REGEX_NS}/Robot/head_link/RobotHeadCam",
-        offset=CameraCfg.OffsetCfg(
-            pos=(0.04485, 0.0, 0.35325), rot=(-0.62721, 0.62721, -0.32651, 0.32651), convention="ros"
-        ),
-        data_types=["rgb"],
-        width=640,
-        height=480,
-        spawn=sim_utils.PinholeCameraCfg(focal_length=15.0, clipping_range=(0.1, 5.0)),
-    )
+    head_camera: CameraCfg = HEAD_CAMERA_CFG
 
 
 @configclass
@@ -373,3 +381,39 @@ class G1ApplePickPlaceEnvCfg(ManagerBasedRLEnvCfg):
         self.decimation = 8
         self.sim.render_interval = self.decimation
         self.episode_length_s = 20.0
+
+
+# Appearance of the real demonstrations, so the generated images look like the images the policy was trained on.
+APPLE_COSMOS_PROMPT_FILE = os.path.join(os.path.dirname(__file__), "prompts", "apple_pick_place.json")
+
+# The hands, apple and plate lie between 0.15 m and 0.9 m from the head camera.
+APPLE_COSMOS_HEAD_CAMERA_CFG = cosmos_camera(
+    HEAD_CAMERA_CFG, CosmosModelCfg(prompt_files=APPLE_COSMOS_PROMPT_FILE), near=0.15, far=0.9, name="head_camera"
+)
+
+
+@configclass
+class G1ApplePickPlaceCosmosEnvCfg(G1ApplePickPlaceEnvCfg):
+    """The apple task with Cosmos generating the head camera's image, selected with ``presets=cosmos``.
+
+    Start the Cosmos service first.
+    """
+
+    scene: ApplePickPlaceSceneCfg = ApplePickPlaceSceneCfg(
+        num_envs=1, env_spacing=3.0, head_camera=APPLE_COSMOS_HEAD_CAMERA_CFG
+    )
+
+    def validate_config(self):
+        """Size the Cosmos episode to the task's final duration and capture rate."""
+        processors = self.scene.head_camera.tensor_processors
+        model = next(cfg.backend for cfg in processors if isinstance(cfg, CosmosTransferProcessorCfg))
+        if model.max_episode_frames is None:
+            model.max_episode_frames = episode_frame_budget(self, self.scene.head_camera.update_period)[2]
+
+
+@configclass
+class G1ApplePickPlaceEnvPresetCfg(PresetCfg):
+    """Select the rendered head camera image or a Cosmos-generated one with ``presets=cosmos``."""
+
+    default: G1ApplePickPlaceEnvCfg = G1ApplePickPlaceEnvCfg()
+    cosmos: G1ApplePickPlaceCosmosEnvCfg = G1ApplePickPlaceCosmosEnvCfg()
