@@ -137,22 +137,20 @@ reads the generated image. Edit that file to change the appearance of the scene.
 
 ## 7. Optional: save the camera images
 
-Add `--save_frames DIR` to save the head camera image the policy sees as PNG files, one at the
-start and then every `--frame_interval` steps (30 by default, one second of simulation).
-
-With `presets=cosmos_compare`, each PNG shows three panels from the same simulation step: the
-plain render, the Cosmos-generated image the policy receives, and the depth sent to Cosmos
-(near is white, far is black):
+Add `--save_frames DIR` to save the first environment's head camera image, the one the
+policy sees, as PNG files, one at the start and then every `--frame_interval` steps (30 by
+default, one second of simulation):
 
 ```bash
-uv run --extra ov --with msgpack==1.2.3 --with pyzmq==27.2.0 \
+uv run --extra isaacsim --with msgpack==1.2.3 --with pyzmq==27.2.0 \
   python scripts/imitation_learning/gr00t/play_apple_pick_place.py \
-  --num_episodes 1 --save_frames outputs/apple_compare \
-  physics=ovphysx renderer=ovrtx presets=cosmos_compare
+  --num_episodes 1 --save_frames outputs/apple_rtx
+uv run --extra isaacsim --with msgpack==1.2.3 --with pyzmq==27.2.0 \
+  python scripts/imitation_learning/gr00t/play_apple_pick_place.py \
+  --num_episodes 1 --save_frames outputs/apple_cosmos presets=cosmos
 ```
 
-The preset adds a second camera at the head camera's pose, so it needs the Cosmos service
-running. Two separate runs are not comparable frame by frame: the policy chooses its actions
-from the image it sees, so a plain run and a Cosmos run diverge after the first action chunk.
+The first command saves the rendered images and the second the Cosmos-generated ones, so the
+same frame number from both folders shows the same moment of an episode.
 
 Press Ctrl+C in the Cosmos terminal and the GR00T terminal when finished.
