@@ -108,3 +108,18 @@ def test_evaluation_setup_is_native_isaac_lab():
     assert events.index("reset_head_camera") > events.index("reset_to_start_states")
     # The table's colliders are shrink-wrapped.
     assert cfg.scene.table.spawn.mesh_collision_props.shrink_wrap is True
+
+
+@pytest.mark.parametrize(
+    "overrides, physics, renderer",
+    (
+        ((), "PhysxCfg", "IsaacRtxRendererCfg"),
+        (("physics=ovphysx", "renderer=ovrtx"), "OvPhysxCfg", "OVRTXRendererCfg"),
+        (("physics=ovphysx", "renderer=newton_renderer"), "OvPhysxCfg", "NewtonWarpRendererCfg"),
+        (("physics=ovphysx", "renderer=ovrtx", "presets=cosmos"), "OvPhysxCfg", "OVRTXRendererCfg"),
+    ),
+)
+def test_backends_are_selected_with_presets(overrides, physics, renderer):
+    cfg = parse_env_cfg("IsaacContrib-PickPlace-Apple-G1-Dex3", overrides=overrides)
+    assert type(cfg.sim.physics).__name__ == physics
+    assert type(cfg.scene.head_camera.renderer_cfg).__name__ == renderer

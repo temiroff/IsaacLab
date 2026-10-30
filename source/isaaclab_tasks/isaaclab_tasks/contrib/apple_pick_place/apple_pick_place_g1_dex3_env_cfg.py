@@ -14,6 +14,9 @@ head camera's rendered image with one Cosmos generates from its depth.
 import os
 
 from isaaclab_experimental.cosmos import CosmosModelCfg, CosmosTransferProcessorCfg, cosmos_camera, episode_frame_budget
+from isaaclab_ov.physics import OvPhysxCfg
+from isaaclab_physx.physics import PhysxCfg
+from isaaclab_physx.renderers import IsaacRtxRendererCfg
 from isaaclab_physx.sim.schemas import PhysxArticulationCfg, PhysxConvexDecompositionCfg, PhysxRigidBodyCfg
 
 import isaaclab.envs.mdp as base_mdp
@@ -26,13 +29,16 @@ from isaaclab.managers import ObservationGroupCfg as ObsGroup
 from isaaclab.managers import ObservationTermCfg as ObsTerm
 from isaaclab.managers import SceneEntityCfg
 from isaaclab.managers import TerminationTermCfg as DoneTerm
+from isaaclab.physics import PhysxAutoCfg
 from isaaclab.scene import InteractiveSceneCfg
 from isaaclab.sensors import CameraCfg, ContactSensorCfg
+from isaaclab.sim import SimulationCfg
 from isaaclab.utils import configclass
 from isaaclab.utils.assets import ISAACLAB_NUCLEUS_DIR
 
 from isaaclab_tasks.contrib.apple_pick_place import mdp
 from isaaclab_tasks.utils import PresetCfg
+from isaaclab_tasks.utils.presets import MultiBackendRendererCfg
 
 # Joint groups in the order of the policy's state inputs.
 LEFT_LEG = [
@@ -204,8 +210,20 @@ HEAD_CAMERA_CFG = CameraCfg(
     data_types=["rgb"],
     width=640,
     height=480,
+    # Isaac RTX needs Isaac Sim; ``renderer=ovrtx`` or ``renderer=newton_renderer`` render without it.
+    renderer_cfg=MultiBackendRendererCfg(default=IsaacRtxRendererCfg(), isaacsim_rtx=IsaacRtxRendererCfg()),
     spawn=sim_utils.PinholeCameraCfg(focal_length=15.0, clipping_range=(0.1, 5.0)),
 )
+
+
+@configclass
+class ApplePhysicsCfg(PresetCfg):
+    """Physics backends: ``physics=ovphysx`` runs PhysX without Isaac Sim, ``physics=isaacsim_physx`` inside it."""
+
+    isaacsim_physx = PhysxCfg()
+    ovphysx = OvPhysxCfg()
+    physx = PhysxAutoCfg(isaacsim_physx=isaacsim_physx, ovphysx=ovphysx)
+    default = isaacsim_physx
 
 
 @configclass
@@ -382,6 +400,7 @@ class G1ApplePickPlaceEnvCfg(ManagerBasedRLEnvCfg):
     """G1 with Dex3 hands picks an apple from a table and places it on a plate."""
 
     scene: ApplePickPlaceSceneCfg = ApplePickPlaceSceneCfg(num_envs=1, env_spacing=3.0)
+    sim: SimulationCfg = SimulationCfg(physics=ApplePhysicsCfg())
     observations: ObservationsCfg = ObservationsCfg()
     actions: ActionsCfg = ActionsCfg()
     events: EventCfg = EventCfg()

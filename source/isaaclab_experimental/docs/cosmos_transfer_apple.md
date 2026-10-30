@@ -101,6 +101,22 @@ uv run --extra isaacsim --with msgpack==1.2.3 --with pyzmq==27.2.0 \
 Each finished episode prints `[INFO] Episodes: N, successes: K`. An episode succeeds when the
 apple rests on the plate and the hands have let go, and ends after 20 seconds otherwise.
 
+### Without Isaac Sim
+
+The task also runs PhysX without Isaac Sim, through OvPhysX, with the kit-less OVRTX renderer.
+`--extra ov` installs both runtimes; no license acceptance or display setup is needed:
+
+```bash
+cd "$ISAAC_LAB"
+uv run --extra ov --with msgpack==1.2.3 --with pyzmq==27.2.0 \
+  python scripts/imitation_learning/gr00t/play_apple_pick_place.py \
+  --num_episodes 4 physics=ovphysx renderer=ovrtx
+```
+
+Use `renderer=newton_renderer` for the lighter Warp renderer. Add `presets=cosmos` as below to
+generate the image with Cosmos. Without `physics=ovphysx` and `renderer=...` the task uses Isaac
+Sim PhysX and the Isaac RTX renderer.
+
 ## 6. Run with Cosmos
 
 Start the Cosmos service in a third terminal as in
