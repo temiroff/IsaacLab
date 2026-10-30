@@ -6,19 +6,20 @@
 """Run the GR00T N1.7 apple policy on the apple pick-and-place task.
 
 The policy runs in a GR00T policy server in its own environment. Start it first, from a
-checkout of the GR00T repository and with the downloaded checkpoint:
+checkout of the GR00T repository (with its submodules) and with the downloaded checkpoint:
 
 .. code-block:: bash
 
     uv run python gr00t/eval/run_gr00t_server.py --embodiment-tag NEW_EMBODIMENT \\
         --model-path /path/to/GR00T-N1.7-AppleToPlate-cosine40k-checkpoint-15000 --port 5555
 
-Then run the task. Add ``presets=cosmos`` to generate the head camera image with Cosmos:
+Then run the task. No window opens unless a visualizer is selected with ``--viz``. Add
+``presets=cosmos`` to generate the head camera image with Cosmos:
 
 .. code-block:: bash
 
     uv run --with msgpack==1.2.3 --with pyzmq==27.2.0 \\
-        python scripts/imitation_learning/gr00t/play_apple_pick_place.py --headless
+        python scripts/imitation_learning/gr00t/play_apple_pick_place.py --num_episodes 4
 """
 
 from __future__ import annotations
