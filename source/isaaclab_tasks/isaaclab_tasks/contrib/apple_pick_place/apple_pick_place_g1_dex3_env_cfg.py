@@ -1,0 +1,375 @@
+# Copyright (c) 2022-2026, The Isaac Lab Project Developers (https://github.com/isaac-sim/IsaacLab/blob/main/CONTRIBUTORS.md).
+# All rights reserved.
+#
+# SPDX-License-Identifier: BSD-3-Clause
+
+"""G1 with Dex3 hands moves an apple onto a plate on a table, seen by a head camera.
+
+The scene, start pose, actuator gains and timing reproduce the evaluation of a GR00T N1.7 policy fine-tuned on
+real demonstrations of this task. The observation and action terms are named and ordered like that policy's
+inputs and outputs, so its exported pipeline can read and write them by name.
+"""
+
+from isaaclab_physx.sim.schemas import PhysxArticulationCfg, PhysxRigidBodyCfg
+
+import isaaclab.envs.mdp as base_mdp
+import isaaclab.sim as sim_utils
+from isaaclab.actuators import IdealPDActuatorCfg
+from isaaclab.assets import ArticulationCfg, AssetBaseCfg, RigidObjectCfg
+from isaaclab.envs import ManagerBasedRLEnvCfg
+from isaaclab.managers import EventTermCfg as EventTerm
+from isaaclab.managers import ObservationGroupCfg as ObsGroup
+from isaaclab.managers import ObservationTermCfg as ObsTerm
+from isaaclab.managers import SceneEntityCfg
+from isaaclab.managers import TerminationTermCfg as DoneTerm
+from isaaclab.scene import InteractiveSceneCfg
+from isaaclab.sensors import CameraCfg, ContactSensorCfg
+from isaaclab.utils import configclass
+from isaaclab.utils.assets import ISAACLAB_NUCLEUS_DIR
+
+from isaaclab_tasks.contrib.apple_pick_place import mdp
+
+# Joint groups in the order of the policy's state inputs.
+LEFT_LEG = [
+    "left_hip_pitch_joint",
+    "left_hip_roll_joint",
+    "left_hip_yaw_joint",
+    "left_knee_joint",
+    "left_ankle_pitch_joint",
+    "left_ankle_roll_joint",
+]
+RIGHT_LEG = [name.replace("left_", "right_") for name in LEFT_LEG]
+WAIST = ["waist_yaw_joint", "waist_roll_joint", "waist_pitch_joint"]
+LEFT_ARM = [
+    "left_shoulder_pitch_joint",
+    "left_shoulder_roll_joint",
+    "left_shoulder_yaw_joint",
+    "left_elbow_joint",
+    "left_wrist_roll_joint",
+    "left_wrist_pitch_joint",
+    "left_wrist_yaw_joint",
+]
+RIGHT_ARM = [name.replace("left_", "right_") for name in LEFT_ARM]
+LEFT_HAND_STATE = [
+    "left_hand_thumb_0_joint",
+    "left_hand_thumb_1_joint",
+    "left_hand_thumb_2_joint",
+    "left_hand_middle_0_joint",
+    "left_hand_middle_1_joint",
+    "left_hand_index_0_joint",
+    "left_hand_index_1_joint",
+]
+RIGHT_HAND_STATE = [
+    "right_hand_thumb_0_joint",
+    "right_hand_thumb_1_joint",
+    "right_hand_thumb_2_joint",
+    "right_hand_index_0_joint",
+    "right_hand_index_1_joint",
+    "right_hand_middle_0_joint",
+    "right_hand_middle_1_joint",
+]
+# The policy's action outputs order the hand joints differently from its state inputs.
+LEFT_HAND_ACTION = [
+    "left_hand_index_0_joint",
+    "left_hand_index_1_joint",
+    "left_hand_middle_0_joint",
+    "left_hand_middle_1_joint",
+    "left_hand_thumb_0_joint",
+    "left_hand_thumb_1_joint",
+    "left_hand_thumb_2_joint",
+]
+RIGHT_HAND_ACTION = [name.replace("left_", "right_") for name in LEFT_HAND_ACTION]
+# Joints the policy commands, in the order of its outputs: positions, then the same joints' feedforward efforts.
+ACTION_JOINTS = LEFT_ARM + RIGHT_ARM + LEFT_HAND_ACTION + RIGHT_HAND_ACTION + WAIST
+
+# Start pose of the evaluation: the robot's first frame in a recorded real demonstration.
+START_JOINT_POS = {
+    "left_hip_pitch_joint": -0.4573,
+    "right_hip_pitch_joint": -0.4683,
+    "waist_yaw_joint": -0.0987,
+    "left_hip_roll_joint": 0.0591,
+    "right_hip_roll_joint": -0.1725,
+    "waist_roll_joint": -0.0153,
+    "left_hip_yaw_joint": -0.0302,
+    "right_hip_yaw_joint": -0.0316,
+    "waist_pitch_joint": 0.0048,
+    "left_knee_joint": 0.9600,
+    "right_knee_joint": 0.7161,
+    "left_shoulder_pitch_joint": -0.2487,
+    "right_shoulder_pitch_joint": -0.5268,
+    "left_ankle_pitch_joint": -0.4761,
+    "right_ankle_pitch_joint": -0.2027,
+    "left_shoulder_roll_joint": 0.6830,
+    "right_shoulder_roll_joint": -0.4402,
+    "left_ankle_roll_joint": -0.0210,
+    "right_ankle_roll_joint": 0.0904,
+    "left_shoulder_yaw_joint": 0.4133,
+    "right_shoulder_yaw_joint": -0.8667,
+    "left_elbow_joint": 1.2576,
+    "right_elbow_joint": 1.1823,
+    "left_wrist_roll_joint": -0.4475,
+    "right_wrist_roll_joint": 0.8583,
+    "left_wrist_pitch_joint": -0.4266,
+    "right_wrist_pitch_joint": 0.2901,
+    "left_wrist_yaw_joint": 0.4694,
+    "right_wrist_yaw_joint": 0.5772,
+    "left_hand_index_0_joint": -0.0588,
+    "left_hand_middle_0_joint": -0.0635,
+    "left_hand_thumb_0_joint": -0.0712,
+    "right_hand_index_0_joint": 0.0218,
+    "right_hand_middle_0_joint": 0.0218,
+    "right_hand_thumb_0_joint": -0.1615,
+    "left_hand_index_1_joint": -0.0608,
+    "left_hand_middle_1_joint": -0.0569,
+    "left_hand_thumb_1_joint": 0.0700,
+    "right_hand_index_1_joint": 0.0334,
+    "right_hand_middle_1_joint": 0.0497,
+    "right_hand_thumb_1_joint": -0.0349,
+    "left_hand_thumb_2_joint": 0.0578,
+    "right_hand_thumb_2_joint": -0.0602,
+}
+
+# The robot stands on the floor with its root fixed; the legs hold the start pose.
+G1_DEX3_CFG = ArticulationCfg(
+    spawn=sim_utils.UsdFileCfg(
+        usd_path=f"{ISAACLAB_NUCLEUS_DIR}/Robots/Unitree/G1_29DOF_Dex3/G1_29DOF_Dex3.usd",
+        rigid_props=[PhysxRigidBodyCfg(disable_gravity=False)],
+        articulation_props=[PhysxArticulationCfg(enabled_self_collisions=True)],
+        fix_root_link=True,
+    ),
+    init_state=ArticulationCfg.InitialStateCfg(pos=(0.0003, -0.0001, 0.7749), joint_pos=START_JOINT_POS),
+    # Gains of the evaluation; the policy's feedforward efforts are added to these PD efforts.
+    actuators={
+        "legs": IdealPDActuatorCfg(
+            joint_names_expr=[".*_hip_.*_joint", ".*_knee_joint"],
+            stiffness={".*_hip_(pitch|yaw)_joint": 40.179, ".*_hip_roll_joint": 99.098, ".*_knee_joint": 99.098},
+            damping={".*_hip_(pitch|yaw)_joint": 2.558, ".*_hip_roll_joint": 6.309, ".*_knee_joint": 6.309},
+            actuator_effort_limit={".*_hip_.*_joint": 88.0, ".*_knee_joint": 139.0},
+            actuator_velocity_limit={".*_hip_.*_joint": 32.0, ".*_knee_joint": 20.0},
+        ),
+        "feet": IdealPDActuatorCfg(
+            joint_names_expr=[".*_ankle_.*_joint"],
+            stiffness=28.501,
+            damping=1.814,
+            actuator_effort_limit=50.0,
+            actuator_velocity_limit=37.0,
+        ),
+        "waist": IdealPDActuatorCfg(
+            joint_names_expr=["waist_.*_joint"],
+            stiffness=300.0,
+            damping=5.0,
+            actuator_effort_limit={"waist_yaw_joint": 88.0, "waist_(roll|pitch)_joint": 50.0},
+            actuator_velocity_limit={"waist_yaw_joint": 32.0, "waist_(roll|pitch)_joint": 37.0},
+        ),
+        "arms": IdealPDActuatorCfg(
+            joint_names_expr=[".*_shoulder_.*_joint", ".*_elbow_joint", ".*_wrist_.*_joint"],
+            stiffness={
+                ".*_shoulder_(pitch|roll)_joint": 100.0,
+                ".*_(shoulder_yaw|elbow)_joint": 40.0,
+                ".*_wrist_.*": 20.0,
+            },
+            damping={".*_shoulder_(pitch|roll)_joint": 5.0, ".*_(shoulder_yaw|elbow)_joint": 2.0, ".*_wrist_.*": 2.0},
+            actuator_effort_limit={".*_(shoulder_.*|elbow|wrist_roll)_joint": 25.0, ".*_wrist_(pitch|yaw)_joint": 5.0},
+            actuator_velocity_limit={
+                ".*_(shoulder_.*|elbow|wrist_roll)_joint": 37.0,
+                ".*_wrist_(pitch|yaw)_joint": 22.0,
+            },
+        ),
+        "hands": IdealPDActuatorCfg(
+            joint_names_expr=[".*_hand_.*_joint"],
+            stiffness=4.0,
+            damping=0.5,
+            actuator_effort_limit={".*_hand_.*_joint": 1.4, ".*_hand_thumb_0_joint": 2.45},
+            actuator_velocity_limit=10.0,
+        ),
+    },
+)
+
+
+@configclass
+class ApplePickPlaceSceneCfg(InteractiveSceneCfg):
+    """Warehouse, table, apple and plate in front of the robot."""
+
+    robot: ArticulationCfg = G1_DEX3_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
+
+    # The warehouse provides the floor, walls and lighting.
+    warehouse = AssetBaseCfg(
+        prim_path="{ENV_REGEX_NS}/Warehouse",
+        spawn=sim_utils.UsdFileCfg(usd_path=f"{ISAACLAB_NUCLEUS_DIR}/Environments/E2E_RA_Warehouse/warehouse.usd"),
+    )
+
+    # Scaled down to the size of the table in the real demonstrations.
+    table = AssetBaseCfg(
+        prim_path="{ENV_REGEX_NS}/Table",
+        init_state=AssetBaseCfg.InitialStateCfg(pos=(0.6163, 0.0788, 0.0411), rot=(0.0, 0.0, 0.5486, 0.8361)),
+        spawn=sim_utils.UsdFileCfg(
+            usd_path=f"{ISAACLAB_NUCLEUS_DIR}/Objects/Table/table.usd", scale=(0.5, 0.9125, 1.0)
+        ),
+    )
+
+    apple = RigidObjectCfg(
+        prim_path="{ENV_REGEX_NS}/Apple",
+        init_state=RigidObjectCfg.InitialStateCfg(pos=(0.4469, 0.0094, 0.8352), rot=(-0.0026, 0.0012, 1.0, -0.0011)),
+        spawn=sim_utils.UsdFileCfg(
+            usd_path=f"{ISAACLAB_NUCLEUS_DIR}/Objects/Apple002/apple.usd",
+            rigid_props=[PhysxRigidBodyCfg(solver_position_iteration_count=16, solver_velocity_iteration_count=8)],
+            mass_props=sim_utils.MassCfg(mass=0.05),
+            activate_contact_sensors=True,
+        ),
+    )
+
+    plate = RigidObjectCfg(
+        prim_path="{ENV_REGEX_NS}/Plate",
+        init_state=RigidObjectCfg.InitialStateCfg(pos=(0.3583, -0.1773, 0.7993)),
+        spawn=sim_utils.UsdFileCfg(
+            usd_path=f"{ISAACLAB_NUCLEUS_DIR}/Objects/Clay_Plate/clay_plate.usd",
+            scale=(0.7, 0.7, 0.7),
+            rigid_props=[PhysxRigidBodyCfg(solver_position_iteration_count=16, solver_velocity_iteration_count=8)],
+            mass_props=sim_utils.MassCfg(mass=0.2),
+        ),
+    )
+
+    # The apple asset nests its rigid body below the spawned prim.
+    apple_contact = ContactSensorCfg(
+        prim_path="{ENV_REGEX_NS}/Apple/Geometry/apple_15_model_normalized_0_vis",
+        filter_prim_paths_expr=["{ENV_REGEX_NS}/Plate"],
+    )
+
+    # Placed like the robot's head camera in the real demonstrations.
+    head_camera = CameraCfg(
+        prim_path="{ENV_REGEX_NS}/Robot/head_link/RobotHeadCam",
+        offset=CameraCfg.OffsetCfg(
+            pos=(0.04485, 0.0, 0.35325), rot=(-0.62721, 0.62721, -0.32651, 0.32651), convention="ros"
+        ),
+        data_types=["rgb"],
+        width=640,
+        height=480,
+        spawn=sim_utils.PinholeCameraCfg(focal_length=15.0, clipping_range=(0.1, 5.0)),
+    )
+
+
+@configclass
+class ActionsCfg:
+    """Joint position targets with feedforward efforts on the arms, hands and waist."""
+
+    joint_pos = base_mdp.JointPositionActionCfg(
+        asset_name="robot", joint_names=ACTION_JOINTS, preserve_order=True, use_default_offset=False
+    )
+    joint_effort = base_mdp.JointEffortActionCfg(asset_name="robot", joint_names=ACTION_JOINTS, preserve_order=True)
+
+
+def _joints(names: list[str]) -> dict:
+    return {"asset_cfg": SceneEntityCfg("robot", joint_names=names, preserve_order=True)}
+
+
+@configclass
+class ObservationsCfg:
+    """Head camera image and joint positions, named like the policy's inputs."""
+
+    @configclass
+    class PolicyCfg(ObsGroup):
+        ego_view = ObsTerm(
+            func=base_mdp.image_rgb, params={"sensor_cfg": SceneEntityCfg("head_camera"), "normalize": False}
+        )
+        left_leg = ObsTerm(func=base_mdp.joint_pos, params=_joints(LEFT_LEG))
+        right_leg = ObsTerm(func=base_mdp.joint_pos, params=_joints(RIGHT_LEG))
+        waist = ObsTerm(func=base_mdp.joint_pos, params=_joints(WAIST))
+        left_arm = ObsTerm(func=base_mdp.joint_pos, params=_joints(LEFT_ARM))
+        right_arm = ObsTerm(func=base_mdp.joint_pos, params=_joints(RIGHT_ARM))
+        left_hand = ObsTerm(func=base_mdp.joint_pos, params=_joints(LEFT_HAND_STATE))
+        right_hand = ObsTerm(func=base_mdp.joint_pos, params=_joints(RIGHT_HAND_STATE))
+
+        def __post_init__(self):
+            self.concatenate_terms = False
+
+    policy: PolicyCfg = PolicyCfg()
+
+
+@configclass
+class EventCfg:
+    """Restore the start pose, with the fingertip and apple friction of the evaluation."""
+
+    reset_scene = EventTerm(func=base_mdp.reset_scene_to_default, mode="reset")
+
+    right_hand_friction = EventTerm(
+        func=base_mdp.randomize_rigid_body_material,
+        mode="reset",
+        params={
+            "asset_cfg": SceneEntityCfg("robot", body_names="right_hand_.*"),
+            "static_friction_range": (0.4, 1.0),
+            "dynamic_friction_range": (0.32, 0.8),
+            "restitution_range": (0.0, 0.0),
+            "num_buckets": 64,
+            "make_consistent": True,
+        },
+    )
+    left_hand_friction = EventTerm(
+        func=base_mdp.randomize_rigid_body_material,
+        mode="startup",
+        params={
+            "asset_cfg": SceneEntityCfg("robot", body_names="left_hand_.*"),
+            "static_friction_range": (1.0, 1.0),
+            "dynamic_friction_range": (1.0, 1.0),
+            "restitution_range": (0.0, 0.0),
+            "num_buckets": 1,
+        },
+    )
+    apple_friction = EventTerm(
+        func=base_mdp.randomize_rigid_body_material,
+        mode="startup",
+        params={
+            "asset_cfg": SceneEntityCfg("apple"),
+            "static_friction_range": (1.0, 1.0),
+            "dynamic_friction_range": (1.0, 1.0),
+            "restitution_range": (0.0, 0.0),
+            "num_buckets": 1,
+        },
+    )
+
+
+@configclass
+class TerminationsCfg:
+    """End on success, a dropped apple, or the time limit."""
+
+    time_out = DoneTerm(func=base_mdp.time_out, time_out=True)
+    # The apple's center is inside the plate's rim, near its height, pressing on it at nearly the apple's weight
+    # (0.49 N), nearly still, and clear of both thumb tips.
+    success = DoneTerm(
+        func=mdp.apple_on_plate,
+        params={
+            "radius": 0.089,
+            "max_height_difference": 0.103,
+            "min_contact_force": 0.44,
+            "max_speed": 0.1,
+            "release_distance": 0.1,
+            "hand_cfg": SceneEntityCfg("robot", body_names=["left_hand_thumb_2_link", "right_hand_thumb_2_link"]),
+        },
+    )
+    # The table top is at 0.76 m; an apple below 0.5 m has fallen off.
+    apple_dropped = DoneTerm(
+        func=base_mdp.root_height_below_minimum, params={"minimum_height": 0.5, "asset_cfg": SceneEntityCfg("apple")}
+    )
+
+
+@configclass
+class RewardsCfg:
+    """No rewards: the task evaluates a pretrained policy."""
+
+
+@configclass
+class G1ApplePickPlaceEnvCfg(ManagerBasedRLEnvCfg):
+    """G1 with Dex3 hands picks an apple from a table and places it on a plate."""
+
+    scene: ApplePickPlaceSceneCfg = ApplePickPlaceSceneCfg(num_envs=1, env_spacing=3.0)
+    observations: ObservationsCfg = ObservationsCfg()
+    actions: ActionsCfg = ActionsCfg()
+    events: EventCfg = EventCfg()
+    terminations: TerminationsCfg = TerminationsCfg()
+    rewards: RewardsCfg = RewardsCfg()
+
+    def __post_init__(self):
+        # The policy acts at 30 Hz, the rate of the real demonstrations, on 240 Hz physics.
+        self.sim.dt = 1 / 240
+        self.decimation = 8
+        self.sim.render_interval = self.decimation
+        self.episode_length_s = 20.0
