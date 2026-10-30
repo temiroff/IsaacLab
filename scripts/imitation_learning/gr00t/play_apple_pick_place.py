@@ -54,9 +54,10 @@ import msgpack
 import numpy as np
 import torch
 import zmq
-from PIL import Image
+from PIL import Image, ImageDraw
 
 import isaaclab_tasks  # noqa: F401
+from isaaclab_tasks.contrib.apple_pick_place.apple_pick_place_g1_dex3_env_cfg import COSMOS_DEPTH_FAR, COSMOS_DEPTH_NEAR
 
 INSTRUCTION = "move the apple to the plate"
 """The task description the policy was trained with."""
@@ -120,11 +121,38 @@ def task_actions(chunk: dict[str, np.ndarray], device: str) -> torch.Tensor:
     return torch.as_tensor(np.concatenate(positions + efforts, axis=-1), dtype=torch.float32, device=device)
 
 
-def save_frame(obs: dict[str, torch.Tensor], index: int):
-    """Save the first environment's head camera image, the one the policy sees."""
+def save_frame(obs: dict[str, dict[str, torch.Tensor]], index: int):
+    """Save the first environment's head camera image, the one the policy sees.
+
+    With ``presets=cosmos_compare``, also save the plain render and the depth Cosmos receives from the same
+    step, side by side.
+    """
     os.makedirs(args_cli.save_frames, exist_ok=True)
-    image = obs["ego_view"][0].to(torch.uint8).cpu().numpy()
-    Image.fromarray(image).save(os.path.join(args_cli.save_frames, f"frame_{index:05d}.png"))
+    panels = [("Policy image", obs["policy"]["ego_view"][0].to(torch.uint8).cpu().numpy())]
+    if "compare" in obs:
+        depth = obs["compare"]["depth"][0, ..., 0].float().cpu().numpy()
+        # near is white and far is black, as in the depth control; invalid pixels are black
+        shade = np.where(
+            np.isfinite(depth),
+            1.0 - np.clip((depth - COSMOS_DEPTH_NEAR) / (COSMOS_DEPTH_FAR - COSMOS_DEPTH_NEAR), 0, 1),
+            0,
+        )
+        depth_image = np.repeat((shade[..., None] * 255).astype(np.uint8), 3, axis=-1)
+        plain = obs["compare"]["plain_rgb"][0].to(torch.uint8).cpu().numpy()
+        panels = [
+            ("Plain render", plain),
+            ("Cosmos (generated)", panels[0][1]),
+            ("Depth sent to Cosmos", depth_image),
+        ]
+    header = 24
+    canvas = Image.new("RGB", (sum(p.shape[1] for _, p in panels), max(p.shape[0] for _, p in panels) + header))
+    draw = ImageDraw.Draw(canvas)
+    left = 0
+    for label, panel in panels:
+        draw.text((left + 6, 6), label, fill=(255, 255, 255))
+        canvas.paste(Image.fromarray(panel), (left, header))
+        left += panel.shape[1]
+    canvas.save(os.path.join(args_cli.save_frames, f"frame_{index:05d}.png"))
 
 
 def main():
@@ -135,7 +163,7 @@ def main():
         obs, _ = env.reset()
         frames = 0
         if args_cli.save_frames:
-            save_frame(obs["policy"], frames)
+            save_frame(obs, frames)
         actions, step = None, 0
         episodes = successes = 0
         while episodes < args_cli.num_episodes and env.unwrapped.sim.is_running():
@@ -148,7 +176,7 @@ def main():
             step += 1
             frames += 1
             if args_cli.save_frames and frames % args_cli.frame_interval == 0:
-                save_frame(obs["policy"], frames)
+                save_frame(obs, frames)
             done = terminated | truncated
             if done.any():
                 succeeded = env.unwrapped.termination_manager.get_term("success")[done]

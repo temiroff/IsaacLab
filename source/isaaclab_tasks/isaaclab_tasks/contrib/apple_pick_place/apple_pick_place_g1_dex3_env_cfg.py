@@ -422,8 +422,14 @@ class G1ApplePickPlaceEnvCfg(ManagerBasedRLEnvCfg):
 APPLE_COSMOS_PROMPT_FILE = os.path.join(os.path.dirname(__file__), "prompts", "apple_pick_place.json")
 
 # The hands, apple and plate lie between 0.15 m and 0.9 m from the head camera.
+COSMOS_DEPTH_NEAR = 0.15
+COSMOS_DEPTH_FAR = 0.9
 APPLE_COSMOS_HEAD_CAMERA_CFG = cosmos_camera(
-    HEAD_CAMERA_CFG, CosmosModelCfg(prompt_files=APPLE_COSMOS_PROMPT_FILE), near=0.15, far=0.9, name="head_camera"
+    HEAD_CAMERA_CFG,
+    CosmosModelCfg(prompt_files=APPLE_COSMOS_PROMPT_FILE),
+    near=COSMOS_DEPTH_NEAR,
+    far=COSMOS_DEPTH_FAR,
+    name="head_camera",
 )
 
 
@@ -447,8 +453,62 @@ class G1ApplePickPlaceCosmosEnvCfg(G1ApplePickPlaceEnvCfg):
 
 
 @configclass
+class ApplePickPlaceCompareSceneCfg(ApplePickPlaceSceneCfg):
+    """The scene with a second, plain camera at the head camera's pose, for comparing it with Cosmos."""
+
+    plain_camera: CameraCfg = HEAD_CAMERA_CFG.replace(
+        prim_path="{ENV_REGEX_NS}/PlainHeadCamera", data_types=["rgb", "distance_to_image_plane"]
+    )
+
+
+@configclass
+class CompareObservationsCfg(ObservationsCfg):
+    """The policy's observations, plus the plain camera's image and depth for comparison."""
+
+    @configclass
+    class CompareCfg(ObsGroup):
+        plain_rgb = ObsTerm(
+            func=base_mdp.image_rgb, params={"sensor_cfg": SceneEntityCfg("plain_camera"), "normalize": False}
+        )
+        depth = ObsTerm(
+            func=base_mdp.image_depth, params={"sensor_cfg": SceneEntityCfg("plain_camera"), "normalize": False}
+        )
+
+        def __post_init__(self):
+            self.concatenate_terms = False
+
+    compare: CompareCfg = CompareCfg()
+
+
+@configclass
+class CompareEventCfg(EventCfg):
+    """Hold the plain camera still like the head camera."""
+
+    reset_plain_camera = EventTerm(
+        func=mdp.reset_fixed_head_camera, mode="reset", params={"camera_cfg": SceneEntityCfg("plain_camera")}
+    )
+
+
+@configclass
+class G1ApplePickPlaceCosmosCompareEnvCfg(G1ApplePickPlaceCosmosEnvCfg):
+    """The Cosmos task with a plain camera beside it, selected with ``presets=cosmos_compare``.
+
+    The plain image, the depth Cosmos receives and the generated image come from the same simulation step, so
+    ``--save_frames`` can save them side by side. Start the Cosmos service first.
+    """
+
+    scene: ApplePickPlaceCompareSceneCfg = ApplePickPlaceCompareSceneCfg(
+        num_envs=1, env_spacing=3.0, head_camera=APPLE_COSMOS_HEAD_CAMERA_CFG
+    )
+    observations: CompareObservationsCfg = CompareObservationsCfg()
+    events: CompareEventCfg = CompareEventCfg()
+
+
+@configclass
 class G1ApplePickPlaceEnvPresetCfg(PresetCfg):
-    """Select the rendered head camera image or a Cosmos-generated one with ``presets=cosmos``."""
+    """Select the rendered head camera image, a Cosmos-generated one with ``presets=cosmos``, or the Cosmos image
+    beside the plain one with ``presets=cosmos_compare``."""
 
     default: G1ApplePickPlaceEnvCfg = G1ApplePickPlaceEnvCfg()
     cosmos: G1ApplePickPlaceCosmosEnvCfg = G1ApplePickPlaceCosmosEnvCfg()
+    cosmos_compare: G1ApplePickPlaceCosmosCompareEnvCfg = G1ApplePickPlaceCosmosCompareEnvCfg()

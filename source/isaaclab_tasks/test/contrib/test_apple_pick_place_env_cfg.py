@@ -16,6 +16,7 @@ from isaaclab.utils.string import resolve_matching_names, resolve_matching_names
 import isaaclab_tasks  # noqa: F401
 from isaaclab_tasks.contrib.apple_pick_place.apple_pick_place_g1_dex3_env_cfg import (
     START_STATES_FILE,
+    G1ApplePickPlaceCosmosCompareEnvCfg,
     G1ApplePickPlaceCosmosEnvCfg,
     G1ApplePickPlaceEnvCfg,
 )
@@ -137,3 +138,18 @@ def test_each_actuator_value_pattern_matches_a_joint_once():
         for field, value in vars(actuator).items():
             if isinstance(value, dict):
                 resolve_matching_names_values(value, names)
+
+
+def test_compare_preset_adds_a_plain_camera_beside_cosmos():
+    cfg = parse_env_cfg("IsaacContrib-PickPlace-Apple-G1-Dex3", overrides=("presets=cosmos_compare",))
+    assert isinstance(cfg, G1ApplePickPlaceCosmosCompareEnvCfg)
+    cfg.validate()
+    # Cosmos still generates the policy's image; the plain camera shares its offset and is held still the same way.
+    assert cfg.scene.head_camera.tensor_processors
+    plain = cfg.scene.plain_camera
+    assert not plain.tensor_processors and plain.data_types == ["rgb", "distance_to_image_plane"]
+    assert plain.prim_path != cfg.scene.head_camera.prim_path and plain.offset == cfg.scene.head_camera.offset
+    assert cfg.events.reset_plain_camera.params["camera_cfg"].name == "plain_camera"
+    assert set(vars(cfg.observations.compare)) >= {"plain_rgb", "depth"}
+    # The default and Cosmos tasks have no plain camera.
+    assert not hasattr(G1ApplePickPlaceCosmosEnvCfg().scene, "plain_camera")
