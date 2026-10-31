@@ -111,8 +111,13 @@ def test_evaluation_setup_is_native_isaac_lab():
     assert "/Robot/" not in cfg.scene.head_camera.prim_path
     events = [name for name, term in vars(cfg.events).items() if hasattr(term, "func")]
     assert events.index("reset_head_camera") > events.index("reset_to_start_states")
-    # The table's colliders are shrink-wrapped.
+    # The table's colliders are shrink-wrapped, and it does not slide when touched.
     assert cfg.scene.table.spawn.mesh_collision_props.shrink_wrap is True
+    assert cfg.scene.table.spawn.rigid_props.kinematic_enabled is True
+    # Environments share one warehouse; a copy per environment would overlap its neighbors.
+    assert not cfg.scene.warehouse.prim_path.startswith("{ENV_REGEX_NS}")
+    # The first image after a reset shows the new start.
+    assert cfg.num_rerenders_on_reset >= 1
 
 
 def test_reset_holds_the_start_pose_with_the_joint_targets():

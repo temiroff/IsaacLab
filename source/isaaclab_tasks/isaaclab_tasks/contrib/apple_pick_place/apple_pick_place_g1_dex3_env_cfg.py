@@ -245,19 +245,22 @@ class ApplePickPlaceSceneCfg(InteractiveSceneCfg):
 
     robot: ArticulationCfg = G1_DEX3_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
 
-    # The warehouse provides the floor, walls and lighting.
+    # The warehouse provides the floor, walls and lighting. It is 24 m x 39 m, so all environments share one;
+    # a copy per environment would put its walls and shelves through the neighboring environments.
     warehouse = AssetBaseCfg(
-        prim_path="{ENV_REGEX_NS}/Warehouse",
+        prim_path="/World/Warehouse",
         spawn=sim_utils.UsdFileCfg(usd_path=f"{ISAACLAB_NUCLEUS_DIR}/Environments/E2E_RA_Warehouse/warehouse.usd"),
     )
 
-    # Scaled down to the size of the table in the real demonstrations, with its colliders shrink-wrapped.
+    # Scaled down to the size of the table in the real demonstrations, with its colliders shrink-wrapped. The asset's
+    # top is a dynamic rigid body; kinematic, the table stays where it is put instead of sliding when touched.
     table = AssetBaseCfg(
         prim_path="{ENV_REGEX_NS}/Table",
         init_state=AssetBaseCfg.InitialStateCfg(pos=(0.6163, 0.0788, 0.0411), rot=(0.0, 0.0, 0.5486, 0.8361)),
         spawn=sim_utils.UsdFileCfg(
             usd_path=f"{ISAACLAB_NUCLEUS_DIR}/Objects/Table/table.usd",
             scale=(0.5, 0.9125, 1.0),
+            rigid_props=sim_utils.UsdPhysicsRigidBodyCfg(kinematic_enabled=True),
             mesh_collision_props=PhysxConvexDecompositionCfg(shrink_wrap=True),
         ),
     )
@@ -426,6 +429,8 @@ class G1ApplePickPlaceEnvCfg(ManagerBasedRLEnvCfg):
         self.decimation = 8
         self.sim.render_interval = self.decimation
         self.episode_length_s = 20.0
+        # The policy's first image after a reset must show the new start, from the head camera's new pose.
+        self.num_rerenders_on_reset = 1
 
 
 # Appearance of the real demonstrations, so the generated images look like the images the policy was trained on.
