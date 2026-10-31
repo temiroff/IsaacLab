@@ -152,7 +152,8 @@ G1_DEX3_CFG = ArticulationCfg(
         fix_root_link=True,
     ),
     init_state=ArticulationCfg.InitialStateCfg(pos=(0.0003, -0.0001, 0.7749), joint_pos=START_JOINT_POS),
-    # Gains of the evaluation; the policy's feedforward efforts are added to these PD efforts.
+    # Gains, armature and friction of the evaluation; the policy's feedforward efforts are added to these PD efforts.
+    # Without the armature, explicit PD on the light wrist and finger links is unstable at 240 Hz.
     actuators={
         "legs": IdealPDActuatorCfg(
             joint_names_expr=[".*_hip_.*_joint", ".*_knee_joint"],
@@ -160,6 +161,7 @@ G1_DEX3_CFG = ArticulationCfg(
             damping={".*_hip_(pitch|yaw)_joint": 2.558, ".*_hip_roll_joint": 6.309, ".*_knee_joint": 6.309},
             actuator_effort_limit={".*_hip_.*_joint": 88.0, ".*_knee_joint": 139.0},
             actuator_velocity_limit={".*_hip_.*_joint": 32.0, ".*_knee_joint": 20.0},
+            armature={".*_hip_(pitch|yaw)_joint": 0.010178, ".*_hip_roll_joint": 0.025102, ".*_knee_joint": 0.025102},
         ),
         "feet": IdealPDActuatorCfg(
             joint_names_expr=[".*_ankle_.*_joint"],
@@ -167,6 +169,8 @@ G1_DEX3_CFG = ArticulationCfg(
             damping=1.814,
             actuator_effort_limit=50.0,
             actuator_velocity_limit=37.0,
+            armature=0.0072195,
+            friction=0.03,
         ),
         "waist": IdealPDActuatorCfg(
             joint_names_expr=["waist_.*_joint"],
@@ -174,6 +178,8 @@ G1_DEX3_CFG = ArticulationCfg(
             damping=5.0,
             actuator_effort_limit={"waist_yaw_joint": 88.0, "waist_(roll|pitch)_joint": 50.0},
             actuator_velocity_limit={"waist_yaw_joint": 32.0, "waist_(roll|pitch)_joint": 37.0},
+            armature=0.03,
+            friction=0.03,
         ),
         "arms": IdealPDActuatorCfg(
             joint_names_expr=[".*_shoulder_.*_joint", ".*_elbow_joint", ".*_wrist_.*_joint"],
@@ -188,6 +194,8 @@ G1_DEX3_CFG = ArticulationCfg(
                 ".*_(shoulder_.*|elbow|wrist_roll)_joint": 37.0,
                 ".*_wrist_(pitch|yaw)_joint": 22.0,
             },
+            armature=0.03,
+            friction=0.03,
         ),
         "hands": IdealPDActuatorCfg(
             joint_names_expr=[".*_hand_.*_joint"],
@@ -198,6 +206,8 @@ G1_DEX3_CFG = ArticulationCfg(
                 ".*_hand_thumb_0_joint": 2.45,
             },
             actuator_velocity_limit=10.0,
+            armature=0.03,
+            friction=0.03,
         ),
     },
 )

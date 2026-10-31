@@ -160,6 +160,12 @@ def test_backends_are_selected_with_presets(overrides, physics, renderer):
     assert type(cfg.scene.head_camera.renderer_cfg).__name__ == renderer
 
 
+def test_every_actuator_sets_armature():
+    """Explicit PD on the light wrist and finger links is unstable at 240 Hz without joint armature."""
+    for name, actuator in G1ApplePickPlaceEnvCfg().scene.robot.actuators.items():
+        assert actuator.armature is not None, name
+
+
 def test_each_actuator_value_pattern_matches_a_joint_once():
     """Per-joint actuator values resolve without overlapping patterns, as the actuators do at spawn."""
     with open(START_STATES_FILE) as f:
