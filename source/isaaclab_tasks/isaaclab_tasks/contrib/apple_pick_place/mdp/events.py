@@ -69,12 +69,14 @@ def reset_to_start_states(
     robot.write_root_pose_to_sim_index(root_pose=root_pose, env_ids=env_ids)
     robot.write_root_velocity_to_sim_index(root_velocity=zero_velocity, env_ids=env_ids)
     joint_ids, _ = robot.find_joints(joint_names, preserve_order=True)
-    robot.write_joint_position_to_sim_index(
-        position=tensors["joint_positions"][index], joint_ids=joint_ids, env_ids=env_ids
-    )
-    robot.write_joint_velocity_to_sim_index(
-        velocity=torch.zeros_like(tensors["joint_positions"][index]), joint_ids=joint_ids, env_ids=env_ids
-    )
+    joint_pos = tensors["joint_positions"][index]
+    robot.write_joint_position_to_sim_index(position=joint_pos, joint_ids=joint_ids, env_ids=env_ids)
+    robot.write_joint_velocity_to_sim_index(velocity=torch.zeros_like(joint_pos), joint_ids=joint_ids, env_ids=env_ids)
+    # No action drives the legs, so their PD targets must hold the start pose; targets start at zero otherwise.
+    command = robot.actuators.target_command
+    command.set_position_index(value=joint_pos, joint_ids=joint_ids, env_ids=env_ids)
+    command.set_velocity_index(value=torch.zeros_like(joint_pos), joint_ids=joint_ids, env_ids=env_ids)
+    command.set_effort_index(value=torch.zeros_like(joint_pos), joint_ids=joint_ids, env_ids=env_ids)
 
 
 def reset_fixed_head_camera(

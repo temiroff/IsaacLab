@@ -6,14 +6,17 @@
 """The apple task's terms follow the evaluated GR00T policy's inputs and outputs."""
 
 import json
+from types import SimpleNamespace
 
 import gymnasium as gym
 import pytest
+import torch
 from isaaclab_experimental.cosmos import CosmosTransferProcessorCfg, read_prompt_files
 
 from isaaclab.utils.string import resolve_matching_names, resolve_matching_names_values
 
 import isaaclab_tasks  # noqa: F401
+from isaaclab_tasks.contrib.apple_pick_place import mdp
 from isaaclab_tasks.contrib.apple_pick_place.apple_pick_place_g1_dex3_env_cfg import (
     START_STATES_FILE,
     G1ApplePickPlaceCosmosEnvCfg,
@@ -110,6 +113,36 @@ def test_evaluation_setup_is_native_isaac_lab():
     assert events.index("reset_head_camera") > events.index("reset_to_start_states")
     # The table's colliders are shrink-wrapped.
     assert cfg.scene.table.spawn.mesh_collision_props.shrink_wrap is True
+
+
+def test_reset_holds_the_start_pose_with_the_joint_targets():
+    """No action drives the legs, so the reset must set their PD targets; they start at zero otherwise."""
+
+    class Recorder:
+        def __init__(self):
+            self.calls = {}
+
+        def __getattr__(self, name):
+            return lambda **kwargs: self.calls.setdefault(name, kwargs)
+
+    with open(START_STATES_FILE) as f:
+        joint_names = json.load(f)["joint_names"]
+    robot = Recorder()
+    robot.find_joints = lambda names, preserve_order: (list(range(len(names))), names)
+    robot.actuators = SimpleNamespace(target_command=Recorder())
+    assets = {"robot": robot, "apple": Recorder(), "plate": Recorder()}
+    scene = type("Scene", (), {"env_origins": torch.zeros(2, 3), "__getitem__": lambda _, name: assets[name]})()
+    env = SimpleNamespace(device="cpu", num_envs=2, scene=scene)
+
+    mdp.reset_to_start_states(env, torch.tensor([0, 1]), START_STATES_FILE)
+
+    written = robot.calls["write_joint_position_to_sim_index"]["position"]
+    targets = robot.actuators.target_command.calls
+    assert torch.equal(targets["set_position_index"]["value"], written)
+    assert targets["set_position_index"]["joint_ids"] == list(range(len(joint_names)))
+    assert not targets["set_velocity_index"]["value"].any() and not targets["set_effort_index"]["value"].any()
+    # The knees start bent; a zero target would straighten the legs under the robot.
+    assert written[0, joint_names.index("left_knee_joint")] > 0.5
 
 
 @pytest.mark.parametrize(

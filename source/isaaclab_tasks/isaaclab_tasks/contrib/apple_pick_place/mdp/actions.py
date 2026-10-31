@@ -51,7 +51,7 @@ class GravityCompensationAction(ActionTerm):
 
     def apply_actions(self):
         gravity = self._asset.data.gravity_compensation_forces.torch[:, self._gravity_ids]
-        self._asset.set_joint_effort_target_index(target=gravity, joint_ids=self._joint_ids)
+        self._asset.actuators.target_command.set_effort_index(value=gravity, joint_ids=self._joint_ids)
 
 
 @configclass
