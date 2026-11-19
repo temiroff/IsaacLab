@@ -12,7 +12,7 @@ import time
 import numpy as np
 import pytest
 import torch
-from isaaclab_experimental.cosmos import _protocol
+from isaaclab_experimental.cosmos import _cuda_ipc, _protocol
 from isaaclab_experimental.cosmos.server.service import serve
 from isaaclab_experimental.cosmos.server.world_model import NUM_CONTROLS, handle_world_model_connection
 from PIL import Image
@@ -51,7 +51,8 @@ class FakeSession:
         if self.model.fail:
             raise RuntimeError("generation failed")
         self.model.controls.append(controls.copy())
-        return torch.full((self.num_envs, T, H, W, 3), len(self.model.controls), dtype=torch.uint8)
+        shape = (self.num_envs, T, H, W, 3)
+        return torch.full(shape, len(self.model.controls), dtype=torch.uint8, device=self.model.capabilities["device"])
 
     def close(self):
         self.model.closed_sessions += 1
@@ -60,10 +61,15 @@ class FakeSession:
 class FakeWorldModel:
     """The service side of a world model, as the Cosmos3 service exposes it."""
 
-    capabilities = {"kind": "world_model", "device": "cpu", "chunk_length": T, "fps": 30, "image_size": [H, W]}
-
-    def __init__(self):
-        self.capabilities = {**self.capabilities, "max_envs": None}
+    def __init__(self, device="cpu"):
+        self.capabilities = {
+            "kind": "world_model",
+            "device": device,
+            "chunk_length": T,
+            "fps": 30,
+            "image_size": [H, W],
+            "max_envs": None,
+        }
         self.resets, self.controls, self.closed_sessions, self.fail = [], [], 0, False
 
     def warmup(self):
@@ -77,11 +83,11 @@ class FakeWorldModel:
 
 
 @pytest.fixture
-def service():
+def service(request):
     with socket.socket() as probe:
         probe.bind(("127.0.0.1", 0))
         endpoint = f"tcp://127.0.0.1:{probe.getsockname()[1]}"
-    model = FakeWorldModel()
+    model = FakeWorldModel(getattr(request, "param", "cpu"))
     thread = threading.Thread(
         target=serve, args=(model, endpoint), kwargs={"handler": handle_world_model_connection}, daemon=True
     )
@@ -140,3 +146,24 @@ def test_a_failed_step_ends_the_session_and_frees_the_service(service, tmp_path)
     other.reset([0], start_images(tmp_path, 1), ["unfold"], [0])
     assert other.step_controls(np.zeros((1, T, NUM_CONTROLS), np.float32)).shape == (1, T, H, W, 3)
     other.close()
+
+
+def test_cuda_ipc_is_refused_with_its_reason_when_unavailable(service, tmp_path):
+    _, endpoint = service
+    model = Cosmos3Model(Cosmos3Cfg(endpoint=endpoint, timeout=5, transport="cuda_ipc"), 1, "cpu")
+    with pytest.raises(RuntimeError, match="cuda_ipc is unavailable: the simulation does not run on a CUDA device"):
+        model.reset([0], start_images(tmp_path, 1), ["unfold"], [0])
+
+
+@pytest.mark.skipif(not (torch.cuda.is_available() and _cuda_ipc.available()), reason="needs CUDA IPC (Linux)")
+@pytest.mark.parametrize("service", ["cuda:0"], indirect=True)
+def test_chunks_reach_the_simulation_device_through_cuda_ipc(service, tmp_path):
+    fake, endpoint = service
+    model = Cosmos3Model(Cosmos3Cfg(endpoint=endpoint, timeout=5, transport="cuda_ipc"), 2, "cuda:0")
+    model.reset([0, 1], start_images(tmp_path, 2), ["unfold", "fold"], [3, 4])
+    assert model.transport == "cuda_ipc"
+    for chunk in (1, 2):
+        frames = model.step_controls(np.zeros((2, T, NUM_CONTROLS), np.float32))
+        assert frames.device == torch.device("cuda:0") and (frames == chunk).all()
+    model.close()
+    assert fake.closed_sessions == 1

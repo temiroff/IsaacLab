@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 from dataclasses import MISSING
+from typing import Literal
 
 from isaaclab_experimental.cosmos._protocol import DEFAULT_TIMEOUT_S
 from isaaclab_experimental.cosmos.server.world_model import DEFAULT_WORLD_MODEL_ENDPOINT
@@ -45,6 +46,11 @@ class Cosmos3Cfg(ModelCfg):
 
     timeout: float = DEFAULT_TIMEOUT_S
     """Wait per service request [s]. A window-mode chunk of many environments can take minutes."""
+
+    transport: Literal["auto", "cuda_ipc", "socket"] = "auto"
+    """How chunks reach the simulation: ``"cuda_ipc"`` keeps them on the GPU, for a service on this machine whose GPU
+    this process can access directly; ``"socket"`` sends them through host memory; ``"auto"`` picks CUDA IPC when it
+    is available."""
 
     joint_mapping: JointMappingCfg | None = None
     """Joint mapping of the robot. Needed to drive the model with joint targets; replaying recorded controls does

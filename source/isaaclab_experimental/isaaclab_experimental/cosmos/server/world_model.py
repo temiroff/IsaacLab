@@ -20,7 +20,7 @@ import socket
 import sys
 import tempfile
 import threading
-from contextlib import suppress
+from contextlib import ExitStack, suppress
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
@@ -28,7 +28,7 @@ from typing import TYPE_CHECKING, Literal
 import numpy as np
 
 from .._protocol import ProtocolError, receive_message, send_message
-from .service import _IDLE_TIMEOUT_S, _check_fields, _run_inference, _ServiceState, serve
+from .service import _IDLE_TIMEOUT_S, _await_disconnect, _check_fields, _run_inference, _ServiceState, serve
 
 if TYPE_CHECKING:
     import torch
@@ -292,6 +292,43 @@ def _allow_saved_config_rewrites() -> None:
                 setattr(other, name, writable)
 
 
+class _FrameOutput:
+    """The GPU buffer and event the service writes each chunk's frames to, for a client on this machine (CUDA IPC).
+
+    The service owns both, and the client maps them. As for camera sessions, the client releases its mapping before it
+    closes the session or disconnects, and the service frees them only after that.
+    """
+
+    def __init__(self, device: torch.device, shape: tuple[int, ...]):
+        from .. import _cuda_ipc
+
+        with ExitStack() as created:
+            self.buffer = _cuda_ipc.SharedBuffer(device, shape)
+            created.callback(self.buffer.close)
+            self.ready = _cuda_ipc.SharedEvent(device)
+            created.callback(self.ready.close)
+            self._created = created.pop_all()
+        self.handles = {"output": self.buffer.handle, "output_ready": self.ready.handle}
+
+    def write(self, frames: torch.Tensor) -> None:
+        """Copy a chunk into the buffer and record the event for the client's stream (inference thread)."""
+        import torch
+
+        self.buffer.tensor.copy_(frames.to(self.buffer.device))
+        self.ready.record()
+        # A GPU fault must reach the client as an error reply; its stream would otherwise wait on the event forever.
+        torch.cuda.current_stream(self.buffer.device).synchronize()
+
+    def close(self, *, peer_released: bool) -> None:
+        """Free the buffer and event, or keep them until exit if the client may still have them mapped."""
+        from .. import _cuda_ipc
+
+        if peer_released:
+            self._created.close()
+        else:
+            _cuda_ipc._KEPT.append(self._created.pop_all())
+
+
 def handle_world_model_connection(
     connection: socket.socket,
     state: _ServiceState,
@@ -300,11 +337,14 @@ def handle_world_model_connection(
 ) -> None:
     """Serve one client's world-model session: ``status``, ``open``, ``reset``, ``step``, ``close``, ``shutdown``.
 
-    Frames return through the socket. A failed reset or step ends the session, since the model may already have
-    advanced its state.
+    Start frames return through the socket, chunks through it too or, when the client opened the session with CUDA
+    IPC, through a GPU buffer. A failed reset or step ends the session, since the model may already have advanced its
+    state.
     """
     token = object()
     session = None
+    output: _FrameOutput | None = None
+    client_released = False
     num_envs = 0
     try:
         while not state.stopping.is_set():
@@ -320,23 +360,39 @@ def handle_world_model_connection(
                     {
                         "ok": True,
                         "ready": not state.stopping.is_set(),
-                        "capabilities": {**state.model.capabilities, "transports": ["socket"]},
+                        "capabilities": {
+                            **state.model.capabilities,
+                            "transports": state.transports,
+                            "host_id": state.host_id,
+                            "pci_bus_id": state.pci_bus_id,
+                        },
                         "session_active": active,
                     },
                 )
             elif operation == "open":
-                _check_fields(metadata, {"op", "version", "num_envs"}, arrays)
+                _check_fields(metadata, {"op", "version", "num_envs"} | ({"transport"} & metadata.keys()), arrays)
                 if session is not None:
                     raise RuntimeError("This connection already has a world-model session.")
                 num_envs = metadata["num_envs"]
                 if type(num_envs) is not int or num_envs < 1:
                     raise ValueError("A world-model session needs a positive num_envs.")
+                transport = metadata.get("transport", "socket")
+                if transport not in state.transports:
+                    raise ValueError(f"This Cosmos service does not offer the {transport} transport.")
                 with state.ownership_lock:
                     if state.owner is not None:
                         raise RuntimeError("The world model already serves a session; close it before connecting.")
                     state.owner = token
                 session = _run_inference(state, state.model.open_session, num_envs)
-                send_message(connection, {"ok": True})
+                reply = {"ok": True}
+                if transport == "cuda_ipc":
+                    import torch
+
+                    capabilities = state.model.capabilities
+                    shape = (num_envs, capabilities["chunk_length"], *capabilities["image_size"], 3)
+                    output = _run_inference(state, _FrameOutput, torch.device(capabilities["device"]), shape)
+                    reply["ipc"] = output.handles
+                send_message(connection, reply)
             elif operation == "reset":
                 _check_fields(metadata, {"op", "version", "env_ids", "prompts", "seeds"}, arrays, allow_arrays=True)
                 if session is None:
@@ -362,13 +418,21 @@ def handle_world_model_connection(
                     or arrays[0].shape != (num_envs, chunk, NUM_CONTROLS)
                 ):
                     raise ValueError(f"A step sends float32 controls ({num_envs}, {chunk}, {NUM_CONTROLS}).")
-                frames = _run_inference(state, session.step, arrays[0])
-                send_message(connection, {"ok": True}, [frames.cpu().numpy()])
+                if output is None:
+                    frames = _run_inference(state, session.step, arrays[0])
+                    send_message(connection, {"ok": True}, [frames.cpu().numpy()])
+                else:
+                    _run_inference(state, lambda controls: output.write(session.step(controls)), arrays[0])
+                    send_message(connection, {"ok": True})
             elif operation == "close":
                 _check_fields(metadata, {"op", "version"}, arrays)
                 if session is not None:
                     _run_inference(state, session.close)
                     session = None
+                if output is not None:
+                    # The client released its mapping before it asked to close.
+                    _run_inference(state, output.close, peer_released=True)
+                    output = None
                 with state.ownership_lock:
                     if state.owner is token:
                         state.owner = None
@@ -382,7 +446,11 @@ def handle_world_model_connection(
                 raise ProtocolError(
                     "Unknown world-model operation; expected status, open, reset, step, close or shutdown."
                 )
-    except (ConnectionError, OSError):
+    except ConnectionError:
+        # The client disconnected. It releases the output buffer first, and a process's mappings end with it. The
+        # service's own shutdown also ends the connection, which confirms nothing.
+        client_released = not state.stopping.is_set()
+    except OSError:
         pass
     except Exception as exc:
         if session is not None:
@@ -399,9 +467,17 @@ def handle_world_model_connection(
             with state.ownership_lock:
                 if state.owner is token:
                     state.owner = None
-            with connections_lock:
-                connections.discard(connection)
-            connection.close()
+            try:
+                if output is not None:
+                    # Without the client's confirmation that it released the buffer, it stays allocated until exit.
+                    with suppress(OSError):
+                        connection.settimeout(_IDLE_TIMEOUT_S)
+                    released = client_released or _await_disconnect(connection, state.stopping)
+                    state.executor.submit(output.close, peer_released=released).result()
+            finally:
+                with connections_lock:
+                    connections.discard(connection)
+                connection.close()
 
 
 def _reset_arguments(metadata: dict, num_envs: int) -> tuple[list[int], list[str], list[int]]:

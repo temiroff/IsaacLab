@@ -116,8 +116,9 @@ points the world model's config at them. The replay script drives `Cosmos3Model`
 
 `Cosmos3Model.step` converts joint targets to 59 normalized controls with the task's `JointMappingCfg`, so the robot
 description and the normalization stay with the task. The service's `--mode window` (default) serves any number of
-environments, one after the other; `--mode session` serves one. Frames return through the socket, which carries
-about 16 environments of 16 frames at 480 x 640 per message.
+environments, one after the other; `--mode session` serves one. With the service on the same machine and a GPU this
+process can access directly, chunks stay on the GPU (CUDA IPC, Linux); otherwise they go through the socket, which
+carries about 16 environments of 16 frames at 480 x 640 per message. `Cosmos3Cfg.transport` forces either one.
 
 ### The medical-pad task
 
