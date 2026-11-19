@@ -8,7 +8,9 @@
 from __future__ import annotations
 
 from dataclasses import MISSING
-from typing import Literal
+
+from isaaclab_experimental.cosmos._protocol import DEFAULT_TIMEOUT_S
+from isaaclab_experimental.cosmos.server.world_model import DEFAULT_WORLD_MODEL_ENDPOINT
 
 from isaaclab.utils import configclass
 
@@ -30,48 +32,19 @@ class JointMappingCfg:
 
 @configclass
 class Cosmos3Cfg(ModelCfg):
-    """Cosmos3 predicting camera frames from joint targets with one local ``unified_v1`` checkpoint.
+    """Cosmos3 served by ``isaaclab-cosmos-world-model-server`` in its own process and environment.
 
-    ``window`` mode conditions each prediction on the last generated image (Stage 0 checkpoints) and serves any
-    number of environments. ``session`` mode keeps the native causal history of distilled checkpoints and serves one
-    environment. ``chunk_size / fps`` is the duration of one model step [s]. With ``None`` sampler overrides, window
-    mode uses the forward-dynamics defaults of 30 denoising steps and shift 10.
+    The service loads the checkpoint and fixes the chunk length, frame rate and image size; the client reads them
+    from the service.
     """
 
     class_type: type | str = "{DIR}.cosmos3_model:Cosmos3Model"
 
-    checkpoint_path: str = MISSING
-    """Directory of a local HF export, or of a DCP checkpoint together with :attr:`config_file`."""
+    endpoint: str = DEFAULT_WORLD_MODEL_ENDPOINT
+    """Service endpoint: ``unix:///path`` on this machine or ``tcp://host:port``."""
 
-    output_dir: str = MISSING
-    """Directory the Cosmos Framework writes inference artifacts to."""
-
-    config_file: str | None = None
-    """Saved YAML configuration of a DCP checkpoint."""
-
-    mode: Literal["window", "session"] = "window"
-
-    image_size: tuple[int, int] = (480, 640)
-    """Height and width of the frames [pixels]."""
-
-    chunk_size: int = 16
-    """Frames predicted, and joint targets consumed, per model step. Divisible by 4."""
-
-    fps: int = 30
-    """Frame rate [Hz]."""
-
-    domain_name: str = "hand_pose"
-
-    resolution: str = "480"
-    """Resolution tier of the Cosmos Framework."""
-
-    num_inference_steps: int | None = None
-
-    guidance: float = 1.0
-
-    shift: float | None = None
-
-    use_ema_weights: bool = True
+    timeout: float = DEFAULT_TIMEOUT_S
+    """Wait per service request [s]. A window-mode chunk of many environments can take minutes."""
 
     joint_mapping: JointMappingCfg | None = None
     """Joint mapping of the robot. Needed to drive the model with joint targets; replaying recorded controls does

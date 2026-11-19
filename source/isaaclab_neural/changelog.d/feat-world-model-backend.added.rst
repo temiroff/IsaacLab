@@ -3,6 +3,5 @@
   engine, through the task's ``physics=`` and ``renderer=`` presets.
 * Added the ``WorldModel`` interface, reset records that the virtual ``Articulation`` starts episodes from, and
   ``at_chunk_boundary`` for terminations that fire where environments can reset.
-* Added ``Cosmos3Model`` for ``unified_v1`` Cosmos3 checkpoints, the ``cosmos3`` extra and a replay script. The extra
-  overrides the Cosmos Framework's ``transformers<5`` pin, and loading lifts the read-only flag that OmegaConf 2.4
-  puts on the saved config while the Framework rewrites it.
+* Added ``Cosmos3Model``, a client of the Cosmos3 world-model service, and a replay script. The Cosmos Framework
+  runs in the service's own environment, so Isaac Lab does not install it.

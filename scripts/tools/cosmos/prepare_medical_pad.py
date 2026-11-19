@@ -5,7 +5,8 @@
 
 """Prepare the model files of the medical-pad example.
 
-Checks that the world model, VAE, tokenizer and reward classifier listed in ``artifacts.json`` are in
+Run it in the Cosmos Framework environment of the world-model service. Checks that the world model, VAE, tokenizer
+and reward classifier listed in ``artifacts.json`` are in
 ``.pretrained_checkpoints``, downloads missing ones with ``--download``, and points the world model's saved config
 at them.
 
@@ -13,7 +14,7 @@ Usage:
 
 .. code-block:: bash
 
-    uv run --extra cosmos3 python scripts/tools/cosmos/prepare_medical_pad.py --download
+    uv run --project "$COSMOS_FRAMEWORK_ROOT" --no-sync python scripts/tools/cosmos/prepare_medical_pad.py --download
 """
 
 import argparse

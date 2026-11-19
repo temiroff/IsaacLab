@@ -64,17 +64,14 @@ The classes are ordered from worst to best (rewards -2 to 2). An episode succeed
 
 @configclass
 class MedicalPadPhysicsCfg(PresetCfg):
-    """Backends of the task. Only the world model exists for this task, so it is also the default."""
+    """Backends of the task. Only the world model exists for this task, so it is also the default.
+
+    The Cosmos3 service, started with ``isaaclab-cosmos-world-model-server --checkpoint {MODEL_DIR}/world_model``,
+    serves :data:`CHUNK` frames of :data:`IMAGE_SIZE` at :data:`FPS` per step.
+    """
 
     default: WorldModelCfg = WorldModelCfg(
-        model=Cosmos3Cfg(
-            checkpoint_path=f"{MODEL_DIR}/world_model",
-            output_dir="outputs/cosmos3",
-            image_size=IMAGE_SIZE,
-            chunk_size=CHUNK,
-            fps=FPS,
-            joint_mapping=H2JointMappingCfg(),
-        ),
+        model=Cosmos3Cfg(joint_mapping=H2JointMappingCfg()),
         reset_manifest=str(ASSETS / "resets.json"),
     )
 

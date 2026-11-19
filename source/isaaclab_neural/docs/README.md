@@ -83,11 +83,30 @@ next chunk, so a model that keeps it copies it. Construction is cheap; load the 
 
 ## Cosmos3
 
+Cosmos3 runs in its own process, in the Cosmos Framework's environment, so Isaac Lab does not install the Framework.
+`Cosmos3Model` is the client: it reads the chunk length, frame rate and image size from the service, sends start
+images and controls, and receives frames. The service is the world-model counterpart of the Cosmos Transfer service
+in [`cosmos_transfer.md`](../../isaaclab_experimental/docs/cosmos_transfer.md) and uses the same transport.
+
+In a server terminal, create the Framework environment at commit `3a84cd3b67f60520f523e184fa7b82011bc75cb4` of
+[cosmos-framework](https://github.com/NVIDIA/cosmos-framework), install the Cosmos service package into it, prepare
+the checkpoints, and start the service:
+
 ```bash
-uv sync --extra cosmos3 --extra importers
-uv run python scripts/tools/cosmos/prepare_medical_pad.py --download
-uv run python scripts/tools/cosmos/cosmos3_replay.py \
-    --checkpoint .pretrained_checkpoints/medical_pad_unfold/world_model --output outputs/cosmos3/replay
+cd "$COSMOS_FRAMEWORK_ROOT"
+uv sync --locked --all-extras --group=cu130-train
+uv run --no-sync uv pip install --editable "$ISAAC_LAB_ROOT/source/isaaclab_experimental/isaaclab_experimental/cosmos"
+cd "$ISAAC_LAB_ROOT"
+uv run --project "$COSMOS_FRAMEWORK_ROOT" --no-sync python scripts/tools/cosmos/prepare_medical_pad.py --download
+uv run --project "$COSMOS_FRAMEWORK_ROOT" --no-sync isaaclab-cosmos-world-model-server \
+    --checkpoint .pretrained_checkpoints/medical_pad_unfold/world_model
+```
+
+Wait for `Cosmos ready at ...`, then, in the Isaac Lab environment:
+
+```bash
+uv sync --extra importers
+uv run python scripts/tools/cosmos/cosmos3_replay.py --output outputs/cosmos3/replay
 ```
 
 `prepare_medical_pad.py` checks the model files listed in the task's
@@ -96,8 +115,9 @@ points the world model's config at them. The replay script drives `Cosmos3Model`
 `generated.mp4`.
 
 `Cosmos3Model.step` converts joint targets to 59 normalized controls with the task's `JointMappingCfg`, so the robot
-description and the normalization stay with the task. `window` mode serves any number of environments, one after the
-other; `session` mode serves one.
+description and the normalization stay with the task. The service's `--mode window` (default) serves any number of
+environments, one after the other; `--mode session` serves one. Frames return through the socket, which carries
+about 16 environments of 16 frames at 480 x 640 per message.
 
 ### The medical-pad task
 
