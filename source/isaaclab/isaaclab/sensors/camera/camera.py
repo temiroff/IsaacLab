@@ -835,9 +835,13 @@ class Camera(SensorBase):
         if history is None or self._renderer.provides_frame_history:
             return
         updated = wp.to_torch(env_mask).bool()
+        selected = updated[:, None, None, None]
         frames = history.torch
-        frames[updated] = torch.roll(frames[updated], shifts=-1, dims=1)
-        frames[updated, -1] = wp.to_torch(self._data.output["rgb"].warp)[updated]
+        # Shift the updated environments one frame towards the oldest, in place and without reading the mask on the
+        # host: each slot takes the next one's frame, then the newest slot takes the capture.
+        for t in range(frames.shape[1] - 1):
+            torch.where(selected, frames[:, t + 1], frames[:, t], out=frames[:, t])
+        torch.where(selected, wp.to_torch(self._data.output["rgb"].warp), frames[:, -1], out=frames[:, -1])
         wp.to_torch(self._data.frame_history_mask.warp).copy_(updated)
 
     def _check_supported_data_types(self, cfg: CameraCfg):

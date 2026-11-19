@@ -18,9 +18,9 @@ from isaaclab.sensors.camera.camera_data import CameraData
 SPECS = {RenderBufferKind.RGBA: RenderBufferSpec(4, wp.uint8), RenderBufferKind.RGB: RenderBufferSpec(3, wp.uint8)}
 
 
-def allocate(history_length):
-    data = CameraData.allocate(["rgb"], 2, 3, 4, "cpu", SPECS, history_length=history_length)
-    data.create_buffers(4, "cpu")
+def allocate(history_length, device="cpu"):
+    data = CameraData.allocate(["rgb"], 2, 3, 4, device, SPECS, history_length=history_length)
+    data.create_buffers(4, device)
     return data
 
 
@@ -36,17 +36,28 @@ def test_history_requires_rgb():
         CameraCfg(height=2, width=3, data_types=["depth"], frame_history_length=2).validate_config()
 
 
-def push(camera, mask):
-    Camera._push_frame_history(camera, wp.array(mask, dtype=wp.bool, device="cpu"))
+def push(camera, mask, device="cpu"):
+    Camera._push_frame_history(camera, wp.array(mask, dtype=wp.bool, device=device))
 
 
-def test_default_push_appends_the_capture_of_updated_environments_only():
-    data = allocate(3)
+@pytest.mark.parametrize("device", ["cpu", "cuda:0"])
+def test_default_push_appends_the_capture_of_updated_environments_only(device):
+    if device.startswith("cuda") and not torch.cuda.is_available():
+        pytest.skip("CUDA is not available")
+    data = allocate(3, device)
     camera = SimpleNamespace(_data=data, _renderer=SimpleNamespace(provides_frame_history=False))
     rgb = data.output["rgb"].torch
+    mask = wp.array([True, True, False, False], dtype=wp.bool, device=device)
     for value in (1, 2):
         rgb[:] = value
-        push(camera, [True, True, False, False])
+        if device.startswith("cuda"):
+            # The push runs on every camera update, so it must not wait for the GPU.
+            torch.cuda.set_sync_debug_mode("error")
+        try:
+            Camera._push_frame_history(camera, mask)
+        finally:
+            if device.startswith("cuda"):
+                torch.cuda.set_sync_debug_mode("default")
     history = data.frame_history.torch
     assert history[0, :, 0, 0, 0].tolist() == [0, 1, 2]
     assert history[2].sum() == 0
