@@ -6,8 +6,8 @@
 """H2 medical-pad unfolding, with Cosmos3 imagining the camera view instead of a physics engine.
 
 The task is written like any manager-based task: an articulation, a camera, joint-position actions, joint and image
-observations, a classifier reward and a reset event. The ``physics=`` preset selects the world-model backend that
-supplies the joint state and the camera frames; no physics engine runs.
+observations and a classifier reward. The ``physics=`` preset selects the world-model backend that supplies the joint
+state and the camera frames; no physics engine runs.
 """
 
 from __future__ import annotations
@@ -18,7 +18,6 @@ import isaaclab.sim as sim_utils
 from isaaclab.assets import ArticulationCfg
 from isaaclab.envs import ManagerBasedRLEnvCfg
 from isaaclab.envs.mdp import JointPositionActionCfg, joint_pos, time_out
-from isaaclab.managers import EventTermCfg as EventTerm
 from isaaclab.managers import ObservationGroupCfg as ObsGroup
 from isaaclab.managers import ObservationTermCfg as ObsTerm
 from isaaclab.managers import RewardTermCfg as RewTerm
@@ -29,7 +28,6 @@ from isaaclab.sensors import CameraCfg
 from isaaclab.sim.spawners.sensors.sensors_cfg import PinholeCameraCfg
 from isaaclab.utils import configclass
 
-from isaaclab_neural.mdp import reset_from_records
 from isaaclab_neural.models.cosmos3 import Cosmos3Cfg
 from isaaclab_neural.physics import WorldModelCfg
 from isaaclab_neural.renderers import WorldModelRendererCfg
@@ -128,9 +126,10 @@ class ObservationsCfg:
 
 @configclass
 class EventCfg:
-    """Start episodes from the recorded start image, prompt and joint state, as a physics task resets its joints."""
+    """No reset event: the world-model articulation starts each episode from a reset record when it resets.
 
-    reset = EventTerm(func=reset_from_records, mode="reset")
+    This replaces the default ``reset_scene_to_default``, which also resets the root pose, and the world model has
+    none."""
 
 
 @configclass

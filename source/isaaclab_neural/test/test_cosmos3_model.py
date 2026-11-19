@@ -6,6 +6,7 @@
 """The parts of Cosmos3 that do not load the Cosmos Framework."""
 
 import numpy as np
+import torch
 
 from isaaclab.utils import configclass
 
@@ -32,15 +33,15 @@ def cosmos3_cfg(**kwargs):
 
 
 def test_a_session_serves_one_environment_and_a_window_any_number():
-    assert Cosmos3Model(cosmos3_cfg(), 4).spec().max_envs is None
-    assert Cosmos3Model(cosmos3_cfg(mode="session"), 1).spec().max_envs == 1
+    assert Cosmos3Model(cosmos3_cfg(), 4, "cpu").spec().max_envs is None
+    assert Cosmos3Model(cosmos3_cfg(mode="session"), 1, "cpu").spec().max_envs == 1
 
 
 def test_joint_targets_are_mapped_to_controls_per_environment():
-    model = Cosmos3Model(cosmos3_cfg(joint_mapping=MappingCfg()), 2)
+    model = Cosmos3Model(cosmos3_cfg(joint_mapping=MappingCfg()), 2, "cpu")
     seen = []
     model.step_controls = lambda controls: seen.append(controls)
-    targets = np.arange(2 * 16 * 3, dtype=np.float32).reshape(2, 16, 3)
-    model.step(targets, np.array([[1, 0, 0], [5, 0, 0]], np.float32))
+    targets = torch.arange(2 * 16 * 3, dtype=torch.float32).reshape(2, 16, 3)
+    model.step(targets, torch.tensor([[1, 0, 0], [5, 0, 0]], dtype=torch.float32))
     assert seen[0].shape == (2, 16, 59)
     assert seen[0][1, 0, 0] == targets[1, 0, 0] + 5

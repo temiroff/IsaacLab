@@ -16,6 +16,7 @@ import isaaclab.sim as sim_utils
 from isaaclab.assets import ArticulationCfg
 from isaaclab.envs.mdp import JointPositionActionCfg
 from isaaclab.envs.mdp.actions.joint_actions import JointPositionAction
+from isaaclab.envs.mdp.events import reset_joints_by_offset
 from isaaclab.envs.mdp.observations import joint_pos, joint_pos_rel
 from isaaclab.managers import SceneEntityCfg
 from isaaclab.scene import InteractiveScene, InteractiveSceneCfg
@@ -23,7 +24,7 @@ from isaaclab.sensors import CameraCfg
 from isaaclab.sim.spawners.sensors.sensors_cfg import PinholeCameraCfg
 from isaaclab.utils import configclass
 
-from isaaclab_neural.mdp import at_chunk_boundary, is_chunk_boundary, reset_from_records
+from isaaclab_neural.mdp import at_chunk_boundary, is_chunk_boundary
 from isaaclab_neural.renderers import WorldModelRendererCfg
 
 from .conftest import DT, FakeModel, H, N, T, W, world_model_sim
@@ -52,15 +53,13 @@ def author_robot(path):
     stage.Save()
 
 
-def event_env(sim, scene, step_dt=DT, episode_steps=3 * T):
-    """The parts of an environment that the reset event reads."""
-    return SimpleNamespace(
-        sim=sim, scene=scene, step_dt=step_dt, max_episode_length=episode_steps, num_envs=N, device="cpu"
-    )
+def event_env(sim, scene):
+    """The parts of an environment that event and termination terms read."""
+    return SimpleNamespace(sim=sim, scene=scene, num_envs=N, device=sim.device)
 
 
 @contextlib.contextmanager
-def robot_world(tmp_path, joint_ordering=None):
+def robot_world(tmp_path, joint_ordering=None, device="cpu"):
     """The robot and a camera on the world-model backend, reset as an environment resets."""
     usd = tmp_path / "robot.usda"
     author_robot(usd)
@@ -88,13 +87,11 @@ def robot_world(tmp_path, joint_ordering=None):
 
     ordered = joint_ordering or JOINTS
     states = [np.array([0.1, 0.2])[[JOINTS.index(name) for name in ordered]]]
-    with world_model_sim(tmp_path, states=states) as sim:
+    with world_model_sim(tmp_path, states=states, device=device) as sim:
         scene = InteractiveScene(SceneCfg(num_envs=N, env_spacing=2.0))
         sim.register_interactive_scene(scene)
         sim.reset()
         scene.reset()
-        env = event_env(sim, scene)
-        reset_from_records(None, env)(env, slice(None))
         yield sim, scene
 
 
@@ -102,6 +99,19 @@ def robot_world(tmp_path, joint_ordering=None):
 def world(tmp_path):
     with robot_world(tmp_path) as world:
         yield world
+
+
+@contextlib.contextmanager
+def no_gpu_sync(device):
+    """On a CUDA device, make torch raise on operations that wait for the GPU."""
+    if not device.startswith("cuda"):
+        yield
+        return
+    torch.cuda.set_sync_debug_mode("error")
+    try:
+        yield
+    finally:
+        torch.cuda.set_sync_debug_mode("default")
 
 
 def env_step(sim, scene):
@@ -131,29 +141,44 @@ def test_joint_ordering_orders_the_joints_and_their_limits_like_a_physics_backen
         assert torch.allclose(robot.data.joint_pos_limits.torch[0, :, 0], torch.tensor([-np.pi / 2, -1.0]))
 
 
-def test_the_reset_event_sets_the_recorded_joint_state(world):
-    env = SimpleNamespace(scene=world[1])
-    assert torch.allclose(joint_pos(env, SceneEntityCfg("robot")), torch.tensor([[0.1, 0.2]] * N))
-    # Relative to the default pose of the articulation, as the observation term of a physics task computes it.
-    assert torch.allclose(joint_pos_rel(env, SceneEntityCfg("robot")), torch.tensor([[0.1, -0.3]] * N))
-
-
-def test_a_standard_action_term_drives_the_model(world):
+def test_a_reset_starts_from_the_record_and_standard_reset_events_keep_it(world):
     sim, scene = world
-    env = SimpleNamespace(scene=scene, num_envs=N, device="cpu")
-    term = JointPositionAction(
-        JointPositionActionCfg(asset_name="robot", joint_names=[".*"], use_default_offset=False), env
-    )
-    for k in range(T):
-        term.process_actions(torch.full((N, 2), 0.1 * (k + 1)))
+    env = event_env(sim, scene)
+    robot = SceneEntityCfg("robot")
+    robot.resolve(scene)
+    assert torch.allclose(joint_pos(env, robot), torch.tensor([[0.1, 0.2]] * N))
+    # The record is the episode's default pose, so the observation relative to it starts at zero.
+    assert torch.allclose(joint_pos_rel(env, robot), torch.zeros(N, 2))
+    # A physics task's reset event starts from the default pose too, so it keeps the recorded state.
+    reset_joints_by_offset(env, torch.arange(N), position_range=(0.0, 0.0), velocity_range=(0.0, 0.0), asset_cfg=robot)
+    assert torch.allclose(joint_pos(env, robot), torch.tensor([[0.1, 0.2]] * N))
+
+
+@pytest.mark.parametrize("device", ["cpu", "cuda:0"])
+def test_a_standard_action_term_drives_the_model(tmp_path, device):
+    if device.startswith("cuda") and not torch.cuda.is_available():
+        pytest.skip("CUDA is not available")
+    with robot_world(tmp_path, device=device) as (sim, scene):
+        env = SimpleNamespace(scene=scene, num_envs=N, device=device)
+        term = JointPositionAction(
+            JointPositionActionCfg(asset_name="robot", joint_names=[".*"], use_default_offset=False), env
+        )
+        actions = [torch.full((N, 2), 0.1 * (k + 1), device=device) for k in range(T)]
+        # Steps inside a chunk must not wait for the device; the model call at the end of the chunk may.
+        with no_gpu_sync(device):
+            for action in actions[:-1]:
+                term.process_actions(action)
+                term.apply_actions()
+                env_step(sim, scene)
+        term.process_actions(actions[-1])
         term.apply_actions()
         env_step(sim, scene)
-    ((targets, start),) = FakeModel.steps
-    assert np.allclose(targets[0, :, 0], [0.1, 0.2, 0.3, 0.4])
-    assert np.allclose(start, [[0.1, 0.2]] * N)
-    # The joint state is the last commanded target, and the camera shows the generated chunk.
-    assert torch.allclose(scene["robot"].data.joint_pos.torch, torch.full((N, 2), 0.4))
-    assert (scene["camera"].data.output["rgb"].torch == 13).all()
+        ((targets, start),) = FakeModel.steps
+        assert np.allclose(targets[0, :, 0], [0.1, 0.2, 0.3, 0.4])
+        assert np.allclose(start, [[0.1, 0.2]] * N)
+        # The joint state is the last commanded target, and the camera shows the generated chunk.
+        assert torch.allclose(scene["robot"].data.joint_pos.torch.cpu(), torch.full((N, 2), 0.4))
+        assert (scene["camera"].data.output["rgb"].torch == 13).all()
 
 
 def test_what_needs_a_simulated_body_raises(world):
@@ -162,14 +187,6 @@ def test_what_needs_a_simulated_body_raises(world):
         robot.data.root_link_pose_w
     with pytest.raises(NotImplementedError, match="world-model backend"):
         robot.write_root_pose_to_sim_index(root_pose=torch.zeros(N, 7))
-
-
-def test_the_reset_event_checks_the_timing_when_the_environment_is_created(world):
-    sim, scene = world
-    with pytest.raises(ValueError, match="one model frame"):
-        reset_from_records(None, event_env(sim, scene, step_dt=2 * DT))
-    with pytest.raises(ValueError, match="not a multiple"):
-        reset_from_records(None, event_env(sim, scene, episode_steps=3 * T + 1))
 
 
 def test_a_termination_at_chunk_boundary_fires_only_when_a_chunk_completes(world):

@@ -67,20 +67,21 @@ class ClassifierTracker:
         restarted = env.episode_length_buf < self._length
         self._length = env.episode_length_buf.clone()
         for state in (self.previous, self.success_streak, self.failure_streak):
-            state[restarted] = 0
+            state.masked_fill_(restarted, 0)
         self.reward.zero_()
         self.success.zero_()
         self.failure.zero_()
 
         data = env.scene[sensor_cfg.name].data
-        new = data.frame_history_mask.torch
-        if not new.any():
+        # Every environment gets a new chunk on the same step, and only then, so the host flag picks the step without
+        # reading the camera's mask on the device.
+        if not env.sim.backend_manager.new_frames:
             return
-        scores, probabilities = self.classifier.score_frames(data.frame_history.torch[new])
+        scores, probabilities = self.classifier.score_frames(data.frame_history.torch)
         scores = scores.to(env.device)
         labels = probabilities.argmax(-1).to(env.device)
         count, frames = scores.shape
-        success, failure = self.success_streak[new], self.failure_streak[new]
+        success, failure = self.success_streak, self.failure_streak
         terminal = torch.full((count,), frames, dtype=torch.long, device=env.device)
         won = torch.zeros(count, dtype=torch.bool, device=env.device)
         lost = torch.zeros_like(won)
@@ -88,17 +89,19 @@ class ClassifierTracker:
             success = torch.where(labels[:, t] == self.success_class, success + 1, 0)
             failure = torch.where(labels[:, t] == self.failure_class, failure + 1, 0)
             first = (terminal == frames) & ((success >= self.streak_frames) | (failure >= self.streak_frames))
-            terminal[first] = t
+            terminal = torch.where(first, t, terminal)
             won |= first & (success >= self.streak_frames)
             lost |= first & ~(success >= self.streak_frames)
         # Frames up to and including the terminal one are valid; without a terminal frame every frame is.
         valid = torch.arange(frames, device=env.device)[None] <= terminal[:, None]
-        progress = torch.cat([self.previous[new, None], scores], dim=1).diff(dim=1)
-        self.reward[new] = (progress * valid).sum(dim=1)
+        progress = torch.cat([self.previous[:, None], scores], dim=1).diff(dim=1)
+        self.reward.copy_((progress * valid).sum(dim=1))
         last = terminal.clamp(max=frames - 1)
-        self.previous[new] = scores.gather(1, last[:, None])[:, 0]
-        self.success_streak[new], self.failure_streak[new] = success, failure
-        self.success[new], self.failure[new] = won, lost
+        self.previous.copy_(scores.gather(1, last[:, None])[:, 0])
+        self.success_streak.copy_(success)
+        self.failure_streak.copy_(failure)
+        self.success.copy_(won)
+        self.failure.copy_(lost)
 
 
 def get_tracker(env: ManagerBasedRLEnv, classifier: dict, sensor_cfg: SceneEntityCfg) -> ClassifierTracker:

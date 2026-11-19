@@ -60,14 +60,13 @@ class BrightnessModel(WorldModel):
         return WorldModelSpec(chunk_length=CHUNK, fps=FPS, image_size=(H, W))
 
     def reset(self, env_ids, images, prompts, seeds):
-        return np.full((len(env_ids), H, W, 3), 20, np.uint8)
+        return torch.full((len(env_ids), H, W, 3), 20, dtype=torch.uint8, device=self.device)
 
     def step(self, joint_targets, start_joint_state):
         BrightnessModel.chunks += 1
-        ramp = np.linspace(0, 1, CHUNK)[None, :, None, None, None]
-        return np.broadcast_to(60 * BrightnessModel.chunks + 10 * ramp, (self.num_envs, CHUNK, H, W, 3)).astype(
-            np.uint8
-        )
+        ramp = torch.linspace(0, 1, CHUNK, dtype=torch.float64, device=self.device)[None, :, None, None, None]
+        frames = (60 * BrightnessModel.chunks + 10 * ramp).to(torch.uint8)
+        return frames.expand(self.num_envs, CHUNK, H, W, 3).contiguous()
 
     def close(self):
         pass

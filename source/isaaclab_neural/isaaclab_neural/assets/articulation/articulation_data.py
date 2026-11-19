@@ -27,19 +27,35 @@ class ArticulationData(BaseArticulationData):
     def __init__(
         self,
         device: str,
-        num_instances: int,
         joint_names: list[str],
+        joint_pos: torch.Tensor,
+        joint_pos_target: torch.Tensor,
         default_joint_pos: torch.Tensor,
         joint_pos_limits: torch.Tensor,
         soft_joint_pos_limit_factor: float,
     ):
+        """Wrap the manager's joint state and targets, so reads and writes need no copy.
+
+        Args:
+            device: Simulation device.
+            joint_names: Joint names, in the order of the buffers.
+            joint_pos: The manager's joint state, shape ``(N, J)``.
+            joint_pos_target: The manager's joint targets, shape ``(N, J)``.
+            default_joint_pos: Default joint positions, shape ``(N, J)``.
+            joint_pos_limits: Joint position limits [m or rad], shape ``(1, J, 2)``.
+            soft_joint_pos_limit_factor: Fraction of the limit range that the soft limits keep.
+        """
         super().__init__(None, device)
         self.joint_names = joint_names
+        num_instances = joint_pos.shape[0]
         shape = (num_instances, len(joint_names))
-        self._joint_pos = ProxyArray(wp.from_torch(default_joint_pos.clone(), dtype=wp.float32))
-        self._joint_pos_command = ProxyArray(wp.from_torch(default_joint_pos.clone(), dtype=wp.float32))
+        self._joint_pos = ProxyArray(wp.from_torch(joint_pos, dtype=wp.float32))
+        self._joint_pos_command = ProxyArray(wp.from_torch(joint_pos_target, dtype=wp.float32))
         self._default_joint_pos = ProxyArray(wp.from_torch(default_joint_pos, dtype=wp.float32))
         self._default_joint_vel = ProxyArray(wp.zeros(shape, dtype=wp.float32, device=device))
+        self._soft_joint_vel_limits = ProxyArray(
+            wp.from_torch(torch.full(shape, torch.inf, device=device), dtype=wp.float32)
+        )
         limits = joint_pos_limits.to(device).expand(num_instances, -1, -1).contiguous()
         self._joint_pos_limits = ProxyArray(wp.from_torch(limits, dtype=wp.vec2f))
         # Soft limits shrink the range around its middle, as for a simulated robot. Unbounded joints stay unbounded.
@@ -52,7 +68,7 @@ class ArticulationData(BaseArticulationData):
         self._soft_joint_pos_limits = ProxyArray(wp.from_torch(soft.contiguous(), dtype=wp.vec2f))
 
     def update(self, dt: float) -> None:
-        """No-op: :meth:`Articulation.update` copies the world model's joint state into the buffers."""
+        """No-op: the buffers are the world model's joint state."""
 
     @property
     def joint_pos(self) -> ProxyArray:
@@ -66,7 +82,8 @@ class ArticulationData(BaseArticulationData):
 
     @property
     def default_joint_pos(self) -> ProxyArray:
-        """Default joint positions, from ``init_state.joint_pos``. Shape is (num_instances, num_joints)."""
+        """Joint positions the episode starts from: the reset record's state, ``init_state.joint_pos`` before the
+        first reset. Shape is (num_instances, num_joints)."""
         return self._default_joint_pos
 
     @property
@@ -83,6 +100,12 @@ class ArticulationData(BaseArticulationData):
     def soft_joint_pos_limits(self) -> ProxyArray:
         """Joint position limits scaled by ``soft_joint_pos_limit_factor``. Shape as :attr:`joint_pos_limits`."""
         return self._soft_joint_pos_limits
+
+    @property
+    def soft_joint_vel_limits(self) -> ProxyArray:
+        """Joint velocity limits, unbounded since the world model has no joint velocity. Shape is
+        (num_instances, num_joints)."""
+        return self._soft_joint_vel_limits
 
     def _reset_pose(self, *args, **kwargs) -> None:
         """No-op: there is no root pose."""

@@ -60,6 +60,9 @@ class Articulation(BaseArticulation):
     world model. The joint positions are the manager's: the reset record's state at reset, then the last commanded
     target. Everything that needs a simulated body (poses, velocities, forces, physical properties) raises.
 
+    :meth:`reset` starts each episode from a reset record and makes the record's state the default joint position, so
+    the standard reset events (``reset_joints_by_offset``, ``reset_joints_by_scale``) start from it as well.
+
     Joints and their limits come from the spawned USD asset, as for a physics backend: its movable joints in
     traversal order, or in the order of ``ArticulationCfg.joint_ordering``, given as a list of every joint name. The
     order must match the reset records.
@@ -133,10 +136,13 @@ class Articulation(BaseArticulation):
         if self.cfg.init_state.joint_pos:
             ids, _, values = resolve_matching_names_values(self.cfg.init_state.joint_pos, names)
             default[:, ids] = torch.tensor(values, dtype=torch.float32, device=self._device)
+        manager.joint_state.copy_(default)
+        manager.joint_target.copy_(default)
         self._data = ArticulationData(
             self._device,
-            self._num_instances,
             names,
+            manager.joint_state,
+            manager.joint_target,
             default,
             torch.tensor(limits, dtype=torch.float32, device=self._device)[None],
             self.cfg.soft_joint_pos_limit_factor,
@@ -147,25 +153,22 @@ class Articulation(BaseArticulation):
         self._data = None
 
     def reset(self, env_ids=None, env_mask=None) -> None:
-        """Clear the command buffers, as a physics backend does. The reset event sets the new joint state."""
+        """Start new episodes from reset records and make each record's state the default joint position.
+
+        The records are files on the host, so the selected environments are read there once per reset.
+        """
         ids = self._env_indices(env_ids, env_mask)
-        self._data.joint_pos_target.torch[ids] = self._data.joint_pos.torch[ids]
+        if not len(ids):
+            return
+        manager: WorldModelManager = self._backend_manager
+        manager.reset_envs(ids.tolist())
+        self._data.default_joint_pos.torch[ids] = manager.joint_state[ids]
 
     def write_data_to_sim(self) -> None:
-        """Hand the joint targets to the manager, which applies them on the next step."""
-        self._backend_manager.set_joint_target(self._data.joint_pos_target.torch.cpu().numpy())
+        """No-op: the joint targets are the manager's buffer, which it applies on the next step."""
 
     def update(self, dt: float) -> None:
-        """Read the manager's joint state."""
-        self._read_state(None)
-
-    def _read_state(self, ids: torch.Tensor | None) -> None:
-        state = torch.from_numpy(self._backend_manager.joint_state).to(self._device)
-        buffer = self._data.joint_pos.torch
-        if ids is None:
-            buffer.copy_(state)
-        else:
-            buffer[ids] = state[ids]
+        """No-op: the joint positions are the manager's buffer."""
 
     # ----------------------------------------------------------------- finders
 
@@ -207,11 +210,9 @@ class Articulation(BaseArticulation):
     ) -> None:
         """Set joint positions, including the state the next chunk starts from."""
         self._set(self._data.joint_pos.torch, position, joint_ids, env_ids, False)
-        self._backend_manager.joint_state[:] = self._data.joint_pos.torch.cpu().numpy()
 
     def write_joint_position_to_sim_mask(self, *, position, joint_mask=None, env_mask=None, skip_forward=False) -> None:
         self._set_mask(self._data.joint_pos.torch, position, joint_mask, env_mask)
-        self._backend_manager.joint_state[:] = self._data.joint_pos.torch.cpu().numpy()
 
     def write_joint_velocity_to_sim_index(self, *, velocity, joint_ids=None, env_ids=None, skip_forward=False) -> None:
         """Ignored: the world model has no joint velocity."""
@@ -254,15 +255,14 @@ class Articulation(BaseArticulation):
         buffer[envs[:, None], joints[None, :]] = value.reshape(len(envs), len(joints))
 
     def _set_mask(self, buffer: torch.Tensor, value, joint_mask, env_mask) -> None:
-        value = self._tensor(value)
-        value = value.to(device=buffer.device, dtype=buffer.dtype)
-        envs = torch.arange(buffer.shape[0], device=buffer.device)
-        joints = torch.arange(buffer.shape[1], device=buffer.device)
+        """Write the full-shape ``value`` where both masks are set, without reading the masks on the host."""
+        value = self._tensor(value).to(device=buffer.device, dtype=buffer.dtype)
+        selected = torch.ones(buffer.shape, dtype=torch.bool, device=buffer.device)
         if env_mask is not None:
-            envs = envs[wp.to_torch(env_mask).bool()]
+            selected &= wp.to_torch(env_mask).bool()[:, None]
         if joint_mask is not None:
-            joints = joints[wp.to_torch(joint_mask).bool()]
-        buffer[envs[:, None], joints[None, :]] = value[envs][:, joints]
+            selected &= wp.to_torch(joint_mask).bool()[None, :]
+        torch.where(selected, value, buffer, out=buffer)
 
     # Private hooks of the base class that have nothing to do here.
     def _create_buffers(self) -> None:

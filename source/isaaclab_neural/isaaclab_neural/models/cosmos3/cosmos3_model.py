@@ -69,8 +69,8 @@ class Cosmos3Model(WorldModel):
 
     cfg: Cosmos3Cfg
 
-    def __init__(self, cfg: Cosmos3Cfg, num_envs: int):
-        super().__init__(cfg, num_envs)
+    def __init__(self, cfg: Cosmos3Cfg, num_envs: int, device: str):
+        super().__init__(cfg, num_envs, device)
         self.pipe: OmniInference | None = None
         self.session: BimanualSession | None = None
         self.contract: BimanualActionContract | None = None
@@ -126,10 +126,17 @@ class Cosmos3Model(WorldModel):
 
     # ----------------------------------------------------------------- frames
 
-    def _pixels(self, rgb: torch.Tensor) -> np.ndarray:
-        """Convert decoded RGB in [0, 1], shape ``(1, 3, T, H, W)``, to ``uint8`` frames ``(1, T, H, W, 3)``."""
+    def _pixels(self, rgb: torch.Tensor) -> torch.Tensor:
+        """Convert decoded RGB in [0, 1], shape ``(1, 3, T, H, W)``, to ``uint8`` frames ``(1, T, H, W, 3)`` on
+        :attr:`device`."""
         # Match the native public API before using pixels as the next condition.
-        return rgb.detach().cpu().clamp(0, 1).mul(255).to(torch.uint8).permute(0, 2, 3, 4, 1).numpy()
+        return rgb.detach().clamp(0, 1).mul(255).to(torch.uint8).permute(0, 2, 3, 4, 1).to(self.device)
+
+    @staticmethod
+    def _condition(frame: torch.Tensor) -> torch.Tensor:
+        """The next condition from the last frame ``(H, W, 3)``: a host ``uint8`` clip ``(3, 1, H, W)``, as the
+        Framework reads it from a file."""
+        return frame.permute(2, 0, 1)[:, None].cpu()
 
     def _batch(self, condition: torch.Tensor, controls: np.ndarray, prompt: str) -> dict:
         from cosmos_framework.inference.action import build_action_batch
@@ -162,10 +169,9 @@ class Cosmos3Model(WorldModel):
     # ------------------------------------------------------------- interface
 
     @torch.inference_mode()
-    def reset(self, env_ids: np.ndarray, images: list[Path], prompts: list[str], seeds: np.ndarray) -> np.ndarray:
+    def reset(self, env_ids: list[int], images: list[Path], prompts: list[str], seeds: list[int]) -> torch.Tensor:
         """Reset the selected rows from real images; other rows keep their generated conditions."""
         self.load()
-        env_ids = np.asarray(env_ids)
         if self.cfg.mode == "session":
             if self.session is not None:
                 self.session.close()
@@ -185,18 +191,19 @@ class Cosmos3Model(WorldModel):
             for image in images:
                 condition, _ = read_media_frames(image, max_frames=1)
                 prepared.append(self._pixels(condition[None].float() / 255))
-            frames = np.concatenate(prepared)
-        for env, frame, prompt, seed in zip(env_ids.tolist(), frames, prompts, np.asarray(seeds), strict=True):
-            self.condition[env] = torch.from_numpy(frame[-1].copy()).permute(2, 0, 1)[:, None]
+            frames = torch.cat(prepared)
+        for env, frame, prompt, seed in zip(env_ids, frames, prompts, seeds, strict=True):
+            self.condition[env] = self._condition(frame[-1])
             self.prompts[env] = prompt
             self.seeds[env] = seed
             self.elapsed[env] = 0
         return frames[:, -1]
 
-    def step_controls(self, controls: np.ndarray) -> np.ndarray:
+    def step_controls(self, controls: np.ndarray) -> torch.Tensor:
         """Predict the next chunk from normalized ``unified_v1`` controls shaped ``(N, T, 59)``.
 
-        Replay of recorded controls uses this directly; the manager goes through :meth:`step`.
+        Replay of recorded controls uses this directly; the manager goes through :meth:`step`. Returns ``uint8``
+        frames ``(N, T, H, W, 3)`` on :attr:`device`.
         """
         cfg = self.cfg
         with torch.inference_mode():
@@ -217,20 +224,22 @@ class Cosmos3Model(WorldModel):
                     )
                     rgb = (self.pipe.model.decode(result["vision"][0]) + 1) / 2
                     chunks.append(self._pixels(rgb)[:, 1:])
-                frames = np.concatenate(chunks)
+                frames = torch.cat(chunks)
         for env, frame in enumerate(frames):
-            self.condition[env] = torch.from_numpy(frame[-1].copy()).permute(2, 0, 1)[:, None]
+            self.condition[env] = self._condition(frame[-1])
         self.elapsed += cfg.chunk_size
         return frames
 
-    def step(self, joint_targets: np.ndarray, start_joint_state: np.ndarray) -> np.ndarray:
-        """Convert joint targets to controls with the task's joint mapping, then predict the chunk."""
+    def step(self, joint_targets: torch.Tensor, start_joint_state: torch.Tensor) -> torch.Tensor:
+        """Convert joint targets to controls with the task's joint mapping, then predict the chunk.
+
+        The mapping and the Framework's control check run on the host, so the targets are read there once per chunk.
+        """
         if self.mapping is None:
             self.mapping = instantiate(self.cfg.joint_mapping)
-        controls = np.stack(
-            [self.mapping.encode(joint_targets[i], start_joint_state[i]) for i in range(self.num_envs)]
-        ).astype(np.float32)
-        return self.step_controls(controls)
+        targets, start = joint_targets.cpu().numpy(), start_joint_state.cpu().numpy()
+        controls = np.stack([self.mapping.encode(targets[i], start[i]) for i in range(self.num_envs)])
+        return self.step_controls(controls.astype(np.float32))
 
     def close(self) -> None:
         if self.session is not None:

@@ -49,11 +49,11 @@ def main():
         mode=args.mode,
     )
     args.output.mkdir(parents=True)
-    model = Cosmos3Model(cfg, num_envs=1)
+    model = Cosmos3Model(cfg, num_envs=1, device="cuda")
     with imageio.get_writer(args.output / "generated.mp4", fps=cfg.fps, macro_block_size=1) as writer:
-        writer.append_data(model.reset(np.array([0]), [args.initial_image], [args.prompt], np.array([args.seed]))[0])
+        writer.append_data(model.reset([0], [args.initial_image], [args.prompt], [args.seed])[0].cpu().numpy())
         for chunk in actions.reshape(-1, 1, cfg.chunk_size, 59):
-            for frame in model.step_controls(chunk)[0]:
+            for frame in model.step_controls(chunk)[0].cpu().numpy():
                 writer.append_data(frame)
     model.close()
 

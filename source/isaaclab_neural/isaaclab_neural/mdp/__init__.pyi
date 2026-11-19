@@ -4,10 +4,8 @@
 # SPDX-License-Identifier: BSD-3-Clause
 
 __all__ = [
-    "reset_from_records",
     "at_chunk_boundary",
     "is_chunk_boundary",
 ]
 
-from .events import reset_from_records
 from .terminations import at_chunk_boundary, is_chunk_boundary

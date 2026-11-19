@@ -8,9 +8,11 @@
 from __future__ import annotations
 
 import math
+from collections.abc import Sequence
 from typing import TYPE_CHECKING
 
 import numpy as np
+import torch
 import warp as wp
 
 from isaaclab.physics import PhysicsEvent, PhysicsManager
@@ -18,7 +20,7 @@ from isaaclab.scene_data import SceneDataBackend, SceneDataFormat
 from isaaclab.sim.views import FrameView, UsdFrameView
 from isaaclab.utils.configclass import instantiate
 
-from ..world_model import ResetRecord, load_reset_records
+from ..world_model import load_reset_records
 
 if TYPE_CHECKING:
     from ..world_model import WorldModel, WorldModelSpec
@@ -36,6 +38,9 @@ class WorldModelManager(PhysicsManager):
     never outputs joint state. The model runs once per chunk: every :meth:`step` buffers one joint target per
     environment, and the step that completes a chunk predicts all of the chunk's frames at once. Environments can
     therefore only reset between chunks.
+
+    Joint state, targets and frames are torch tensors on the simulation device. The articulation reads and writes
+    :attr:`joint_state` and :attr:`joint_target` in place, so an environment step copies nothing to the host.
     """
 
     backend_name = "neural"
@@ -47,15 +52,18 @@ class WorldModelManager(PhysicsManager):
         self.spec: WorldModelSpec | None = None
         self.num_envs = 0
         self.num_joints = 0
-        self.joint_state: np.ndarray
+        self.joint_state: torch.Tensor
         """Joint positions [m or rad, depending on joint type], shape ``(N, J)``."""
-        self.joint_target: np.ndarray
+        self.joint_target: torch.Tensor
         """Joint position targets applied by the next :meth:`step`, shape ``(N, J)``."""
-        self.frame_history: np.ndarray
-        """RGB frames of the last completed chunk, shape ``(N, T, H, W, 3)``. After a reset, every frame is the start
-        frame."""
-        self.frame_serial: np.ndarray
-        """Per-environment counter that increases whenever the environment's frames change."""
+        self.frame_history: torch.Tensor
+        """RGB frames of the last completed chunk, shape ``(N, T, H, W, 3)``, ``uint8``. After a reset, every frame
+        is the start frame."""
+        self.frame_serial: torch.Tensor
+        """Per-environment counter that increases whenever the environment's frames change, shape ``(N,)``."""
+        self.frame_version = 0
+        """Host counter that increases whenever any environment's frames change, so readers skip steps without new
+        frames without reading the device."""
         self.new_frames = False
         """Whether the last :meth:`step` completed a chunk."""
         self._records = load_reset_records(cfg.reset_manifest)
@@ -63,24 +71,31 @@ class WorldModelManager(PhysicsManager):
         self._rng = np.random.default_rng(cfg.seed)
         self._cursor = 0
         self._draws = 0
-        self._targets: np.ndarray
-        self._chunk_start: np.ndarray
+        self._record_states: torch.Tensor
+        self._targets: torch.Tensor
+        self._chunk_start: torch.Tensor
         self._steps_in_chunk = 0
         self._scene_data: SceneDataBackend
 
     def bind(self, num_envs: int, num_joints: int) -> None:
         """Size the manager for a scene. Called by the articulation when it initializes."""
-        self.model = instantiate(self._cfg.model, num_envs)
+        if num_envs % self._cfg.envs_per_reset_record:
+            raise ValueError(f"envs_per_reset_record={self._cfg.envs_per_reset_record} must divide num_envs={num_envs}")
+        self.model = instantiate(self._cfg.model, num_envs, self._device)
         self.spec = self.model.spec()
         if not math.isclose(self._sim.cfg.dt, 1.0 / self.spec.fps):
             raise ValueError(f"sim.dt must equal 1 / fps = {1.0 / self.spec.fps} s, got {self._sim.cfg.dt}")
         self.num_envs, self.num_joints = num_envs, num_joints
-        self.joint_state = np.zeros((num_envs, num_joints), np.float32)
-        self.joint_target = np.zeros((num_envs, num_joints), np.float32)
-        self.frame_history = np.zeros((num_envs, self.spec.chunk_length, *self.spec.image_size, 3), np.uint8)
-        self.frame_serial = np.zeros(num_envs, np.int64)
-        self._targets = np.zeros((num_envs, self.spec.chunk_length, num_joints), np.float32)
-        self._chunk_start = self.joint_state.copy()
+        device = self._device
+        self.joint_state = torch.zeros((num_envs, num_joints), device=device)
+        self.joint_target = torch.zeros_like(self.joint_state)
+        self.frame_history = torch.zeros(
+            (num_envs, self.spec.chunk_length, *self.spec.image_size, 3), dtype=torch.uint8, device=device
+        )
+        self.frame_serial = torch.zeros(num_envs, dtype=torch.int64, device=device)
+        self._record_states = torch.from_numpy(np.stack([r.joint_state for r in self._split_records])).to(device)
+        self._targets = torch.zeros((num_envs, self.spec.chunk_length, num_joints), device=device)
+        self._chunk_start = torch.zeros_like(self.joint_state)
 
     def initialize(self, sim_context) -> None:
         super().initialize(sim_context)
@@ -88,13 +103,15 @@ class WorldModelManager(PhysicsManager):
         self._scene_data = _EmptySceneData(self._device)
 
     def reset(self, soft: bool = False) -> None:
-        """Dispatch the lifecycle events. Episodes start with :meth:`reset_envs`, called by a reset event."""
+        """Dispatch the lifecycle events. Episodes start with :meth:`reset_envs`, called by the articulation's reset."""
         if not soft:
             self.dispatch_event(PhysicsEvent.MODEL_INIT)
         self.dispatch_event(PhysicsEvent.PHYSICS_READY)
 
-    def reset_envs(self, env_ids: np.ndarray) -> None:
+    def reset_envs(self, env_ids: Sequence[int]) -> None:
         """Start new episodes in the selected environments from sampled reset records.
+
+        Records are image files and prompts on the host, so the environments are given as host integers.
 
         Raises:
             RuntimeError: If called in the middle of a chunk.
@@ -104,31 +121,33 @@ class WorldModelManager(PhysicsManager):
                 f"Environments can only reset on chunk boundaries, but {self._steps_in_chunk} of "
                 f"{self.spec.chunk_length} steps of the chunk have been taken."
             )
-        records = self._sample(env_ids)
+        env_ids = list(env_ids)
+        indices = self._sample(env_ids)
+        records = [self._split_records[i] for i in indices]
         self._draws += 1
-        seeds = (self._cfg.seed + 997 * self._draws + env_ids) % 2**32
+        seeds = [(self._cfg.seed + 997 * self._draws + env) % 2**32 for env in env_ids]
         frames = self.model.reset(env_ids, [r.image for r in records], [r.prompt for r in records], seeds)
-        self.frame_history[env_ids] = frames[:, None]
-        self.frame_serial[env_ids] += 1
-        self.joint_state[env_ids] = np.stack([r.joint_state for r in records])
-        self.joint_target[env_ids] = self.joint_state[env_ids]
+        rows = torch.tensor(env_ids, device=self._device)
+        self.frame_history[rows] = frames[:, None]
+        self.frame_serial[rows] += 1
+        self.frame_version += 1
+        state = self._record_states[torch.tensor(indices, device=self._device)]
+        self.joint_state[rows] = state
+        self.joint_target[rows] = state
         self.new_frames = False
-
-    def set_joint_target(self, target: np.ndarray) -> None:
-        """Set the joint position targets, shape ``(N, J)``, that the next :meth:`step` applies."""
-        self.joint_target = target.astype(np.float32)
 
     def step(self) -> None:
         """Advance one frame; on the last frame of a chunk, predict the chunk with the model."""
         if not self._steps_in_chunk:
-            self._chunk_start = self.joint_state.copy()
+            self._chunk_start.copy_(self.joint_state)
         self._targets[:, self._steps_in_chunk] = self.joint_target
-        self.joint_state = self.joint_target.copy()
+        self.joint_state.copy_(self.joint_target)
         self._steps_in_chunk += 1
         self.new_frames = self._steps_in_chunk == self.spec.chunk_length
         if self.new_frames:
-            self.frame_history = self.model.step(self._targets, self._chunk_start)
+            self.frame_history.copy_(self.model.step(self._targets, self._chunk_start))
             self.frame_serial += 1
+            self.frame_version += 1
             self._steps_in_chunk = 0
         self._sim_time += self.get_physics_dt()
 
@@ -143,21 +162,17 @@ class WorldModelManager(PhysicsManager):
         if self.model is not None:
             self.model.close()
 
-    def _sample(self, env_ids: np.ndarray) -> list[ResetRecord]:
-        """Pick a reset record per environment. Environments of one reset-record group share a draw, so a group-relative
-        algorithm compares rollouts of the same scene. Training draws at random; other splits are visited in order."""
-        if self.num_envs % self._cfg.envs_per_reset_record:
-            raise ValueError(
-                f"envs_per_reset_record={self._cfg.envs_per_reset_record} must divide num_envs={self.num_envs}"
-            )
-        group_draws: dict[int, ResetRecord] = {}
-        for group in np.unique(env_ids // self._cfg.envs_per_reset_record):
+    def _sample(self, env_ids: list[int]) -> list[int]:
+        """Pick a reset record per environment and return their indices. Environments of one reset-record group share
+        a draw, so a group-relative algorithm compares rollouts of the same scene. Training draws at random; other
+        splits are visited in order."""
+        group_draws: dict[int, int] = {}
+        for group in sorted({env // self._cfg.envs_per_reset_record for env in env_ids}):
             if self._cfg.split == "train":
-                index = self._rng.integers(len(self._split_records))
+                group_draws[group] = int(self._rng.integers(len(self._split_records)))
             else:
-                index = self._cursor % len(self._split_records)
+                group_draws[group] = self._cursor % len(self._split_records)
                 self._cursor += 1
-            group_draws[group] = self._split_records[index]
         return [group_draws[env // self._cfg.envs_per_reset_record] for env in env_ids]
 
 

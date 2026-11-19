@@ -5,7 +5,6 @@
 
 """A camera fed by the world-model backend."""
 
-import numpy as np
 import pytest
 import torch
 
@@ -39,14 +38,14 @@ def world(tmp_path):
         scene = InteractiveScene(SceneCfg(num_envs=N, env_spacing=1.0))
         sim.backend_manager.bind(N, J)
         sim.reset()
-        sim.backend_manager.reset_envs(np.arange(N))
+        sim.backend_manager.reset_envs(range(N))
         yield sim, scene
 
 
 def advance(sim, scene, steps):
     """Step like an environment does: the observation reads the camera after every step."""
     for _ in range(steps):
-        sim.backend_manager.set_joint_target(np.zeros((N, J), np.float32))
+        sim.backend_manager.joint_target.zero_()
         sim.step(render=False)
         scene.update(DT)
         scene["camera"].data

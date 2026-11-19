@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
+import torch
 
 from isaaclab.utils import configclass
 
@@ -22,7 +23,7 @@ class ModelCfg:
     """Base configuration of a world model. Concrete models subclass it and set :attr:`class_type`."""
 
     class_type: type[WorldModel] | str = "{DIR}.world_model:WorldModel"
-    """The :class:`WorldModel` subclass built as ``class_type(cfg, num_envs)``."""
+    """The :class:`WorldModel` subclass built as ``class_type(cfg, num_envs, device)``."""
 
 
 @dataclass(frozen=True)
@@ -80,33 +81,35 @@ class WorldModel(ABC):
     """A learned model that predicts camera frames from joint targets.
 
     The model owns only visual dynamics; it never outputs joint state. Construction is cheap and weights load on
-    the first :meth:`reset`.
+    the first :meth:`reset`. Joint targets and frames are torch tensors on :attr:`device`, the simulation device, so
+    a model that runs on the GPU keeps them there.
     """
 
-    def __init__(self, cfg: ModelCfg, num_envs: int):
+    def __init__(self, cfg: ModelCfg, num_envs: int, device: str):
         self.cfg = cfg
         self.num_envs = num_envs
+        self.device = device
 
     @abstractmethod
     def spec(self) -> WorldModelSpec:
         """Return the model's static properties."""
 
     @abstractmethod
-    def reset(self, env_ids: np.ndarray, images: list[Path], prompts: list[str], seeds: np.ndarray) -> np.ndarray:
+    def reset(self, env_ids: list[int], images: list[Path], prompts: list[str], seeds: list[int]) -> torch.Tensor:
         """Reset the selected environments from start images.
 
         Args:
-            env_ids: Environments to reset, shape ``(K,)``.
+            env_ids: Environments to reset.
             images: Start image of each selected environment.
             prompts: Task description of each selected environment.
-            seeds: Sampling seed of each selected environment, shape ``(K,)``.
+            seeds: Sampling seed of each selected environment.
 
         Returns:
-            The first RGB frame of each selected environment, shape ``(K, H, W, 3)``, ``uint8``.
+            The first RGB frame of each selected environment, shape ``(K, H, W, 3)``, ``uint8``, on :attr:`device`.
         """
 
     @abstractmethod
-    def step(self, joint_targets: np.ndarray, start_joint_state: np.ndarray) -> np.ndarray:
+    def step(self, joint_targets: torch.Tensor, start_joint_state: torch.Tensor) -> torch.Tensor:
         """Predict the next chunk of frames for all environments.
 
         Args:
@@ -114,7 +117,7 @@ class WorldModel(ABC):
             start_joint_state: Joint positions before the chunk, shape ``(N, num_joints)``.
 
         Returns:
-            RGB frames, shape ``(N, chunk_length, H, W, 3)``, ``uint8``.
+            RGB frames, shape ``(N, chunk_length, H, W, 3)``, ``uint8``, on :attr:`device`.
         """
 
     @abstractmethod

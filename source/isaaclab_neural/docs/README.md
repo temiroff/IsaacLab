@@ -18,8 +18,7 @@ state at reset, then the last joint target), so joint observations and actions b
 | `WorldModelManager` | Physics backend (`backend_name = "neural"`). Buffers one joint target per step and calls the model once per chunk. |
 | `WorldModel` | Abstract model: `spec()`, `reset()`, `step()`, `close()`. |
 | `WorldModelRendererCfg` | Selected as a camera's `renderer_cfg`. Copies the generated frames into the camera, including its frame history. |
-| `Articulation` | Virtual articulation. Reads and writes the manager's joint state, so the task's joint observation and action terms work unchanged. Everything that needs a body raises. |
-| `reset_from_records` | Reset event that starts an episode from a reset record, in place of `reset_joints_by_*`. |
+| `Articulation` | Virtual articulation. Shares the manager's joint state and targets, so the task's joint observation and action terms work unchanged. Its reset starts an episode from a reset record. Everything that needs a body raises. |
 | `at_chunk_boundary` | Makes a termination function fire only where environments can reset. |
 | `Cosmos3Cfg`, `Cosmos3Model` | Cosmos3 `unified_v1` implementation of `WorldModel` (`isaaclab_neural.models.cosmos3`). |
 
@@ -34,10 +33,17 @@ model with `WorldModelCfg(model=..., reset_manifest=...)` and `WorldModelRendere
   limits are read from the USD, and `soft_joint_pos_limit_factor` applies as usual.
 * **Observations and actions**: `joint_pos` terms read the joint state and `JointPositionAction` writes the target.
   Velocity and effort targets, poses, forces and physical properties raise `NotImplementedError`.
-* **Resets**: `Articulation.reset` only clears the command buffers, as for a physics backend. The reset event
-  `reset_from_records` samples a reset record (`image`, `state`, `prompt`, `split` in the JSON manifest), resets the
-  model from the record's image and prompt, and writes the record's joint state. Training samples records at random;
-  other splits visit them in order. `envs_per_reset_record` consecutive environments share a record (default 1); a group-relative algorithm such as GRPO sets it to its group size so that a group compares rollouts of one scene.
+* **Resets**: `Articulation.reset`, which the scene calls before the reset events, samples a reset record (`image`,
+  `state`, `prompt`, `split` in the JSON manifest), resets the model from the record's image and prompt, and writes
+  the record's joint state as the joint state and the default joint position. The standard `reset_joints_by_offset`
+  and `reset_joints_by_scale` events therefore start from the record; a non-zero range moves the joints away from the
+  start image the model sees, so randomize through the records instead. `reset_scene_to_default`, the default reset
+  event, also resets the root pose, which the world model does not have, so a task replaces the default event
+  configuration. Training samples records at random; other splits visit them in order. `envs_per_reset_record`
+  consecutive environments share a record (default 1); a group-relative algorithm such as GRPO sets it to its group
+  size so that a group compares rollouts of one scene.
+* **Device**: joint state, targets and frames stay on the simulation device. An environment step inside a chunk reads
+  nothing back to the host; a reset reads the environment ids once, since the records are files.
 
 ## Timing
 
@@ -48,8 +54,7 @@ together, so a reward on them is paid in the step that completes the chunk.
 Isaac Lab resets an environment in any step in which a termination fires, but the model can only restart between
 chunks, so a reset in the middle of a chunk raises.
 
-* `reset_from_records` checks when the environment is created that one step is one frame and that `episode_length_s`
-  is a multiple of the chunk duration, so that the time-out falls on a boundary.
+* Make `episode_length_s` a multiple of the chunk duration, so that the time-out falls on a boundary.
 * A termination you add must fire only on boundaries. Wrap its function with `at_chunk_boundary`:
 
   ```python
@@ -63,16 +68,18 @@ chunks, so a reset in the middle of a chunk raises.
 
 ## Add a world model
 
-Subclass `ModelCfg` and `WorldModel`, and set the configuration's `class_type`:
+Subclass `ModelCfg` and `WorldModel`, and set the configuration's `class_type`. The manager builds the model as
+`class_type(cfg, num_envs, device)` with the simulation device:
 
 | Method | Responsibility |
 | --- | --- |
 | `spec()` | Chunk length, frame rate, image size and the largest number of environments. |
-| `reset(env_ids, images, prompts, seeds)` | Reset the selected environments; return their first frames `(K, H, W, 3)`. |
+| `reset(env_ids, images, prompts, seeds)` | Reset the selected environments (host lists); return their first frames `(K, H, W, 3)`. |
 | `step(joint_targets, start_joint_state)` | Joint targets `(N, T, J)` and the state before the chunk `(N, J)` to frames `(N, T, H, W, 3)`. |
 | `close()` | Release resources. |
 
-Construction is cheap; load the weights on the first `reset()`.
+Frames are `uint8` torch tensors on the device, and joint targets arrive there. The targets buffer is reused for the
+next chunk, so a model that keeps it copies it. Construction is cheap; load the weights on the first `reset()`.
 
 ## Cosmos3
 
@@ -95,7 +102,7 @@ other; `session` mode serves one.
 ### The medical-pad task
 
 `Isaac-Cosmos3-Medical-Pad-Unfold-v0` is a manager-based task on this backend. It uses `JointPositionAction` over the
-58 recorded H2 joints, a `joint_pos` observation, the head camera's image and `reset_from_records`. Its reward and its
+58 recorded H2 joints, a `joint_pos` observation and the head camera's image, and has no reset event. Its reward and its
 success and failure terminations read one `ClassifierTracker`, which judges each generated chunk frame by frame:
 
 * An episode **succeeds** (**fails**) at the first frame that completes 30 consecutive frames of the classifier's best

@@ -10,7 +10,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, ClassVar
 
-import numpy as np
 import torch
 import warp as wp
 
@@ -27,9 +26,13 @@ if TYPE_CHECKING:
 
 @dataclass
 class _RenderData:
-    """Per-camera state: the frame serials the camera has already received."""
+    """Per-camera state: the frames the camera has already received."""
 
-    seen: np.ndarray
+    seen: torch.Tensor
+    """The manager's frame serial of each environment at the last copy, shape ``(N,)``."""
+
+    version: int = -1
+    """The manager's frame version at the last copy."""
 
 
 class WorldModelRenderer(BaseRenderer):
@@ -50,7 +53,7 @@ class WorldModelRenderer(BaseRenderer):
         pass
 
     def create_render_data(self, spec: CameraRenderSpec) -> _RenderData:
-        return _RenderData(seen=np.full(spec.num_instances, -1, np.int64))
+        return _RenderData(seen=torch.full((spec.num_instances,), -1, dtype=torch.int64, device=self._sim.device))
 
     def set_outputs(self, render_data: _RenderData, output_data: dict[str, ProxyArray]) -> None:
         pass
@@ -68,17 +71,20 @@ class WorldModelRenderer(BaseRenderer):
         pass
 
     def read_output(self, render_data: _RenderData, camera_data: CameraData) -> None:
+        """Copy the environments whose frames changed since the last call, and only on steps where any did."""
         manager: WorldModelManager = self._sim.backend_manager
-        mask = torch.from_numpy(manager.frame_serial != render_data.seen)
-        render_data.seen = manager.frame_serial.copy()
+        mask = wp.to_torch(camera_data.frame_history_mask.warp)
+        if manager.frame_version == render_data.version:
+            mask.zero_()
+            return
+        render_data.version = manager.frame_version
+        torch.ne(manager.frame_serial, render_data.seen, out=mask)
+        render_data.seen.copy_(manager.frame_serial)
         history = wp.to_torch(camera_data.frame_history.warp)
-        mask = mask.to(history.device)
-        frames = torch.from_numpy(manager.frame_history).to(history.device)
-        history[mask] = frames[mask]
+        torch.where(mask[:, None, None, None, None], manager.frame_history, history, out=history)
         rgba = wp.to_torch(camera_data.output["rgba"].warp)
-        rgba[mask, ..., :3] = frames[mask, -1]
-        rgba[mask, ..., 3] = 255
-        wp.to_torch(camera_data.frame_history_mask.warp).copy_(mask)
+        last = torch.cat((history[:, -1], torch.full_like(history[:, -1, ..., :1], 255)), dim=-1)
+        torch.where(mask[:, None, None, None], last, rgba, out=rgba)
 
     def cleanup(self, render_data: Any) -> None:
         pass

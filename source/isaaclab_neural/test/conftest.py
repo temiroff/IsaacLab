@@ -9,6 +9,7 @@ import contextlib
 import json
 
 import numpy as np
+import torch
 
 import isaaclab.sim as sim_utils
 from isaaclab.sim import SimulationCfg
@@ -35,12 +36,12 @@ class FakeModel(WorldModel):
 
     def reset(self, env_ids, images, prompts, seeds):
         FakeModel.resets.append(prompts)
-        return np.stack([np.full((H, W, 3), 200 + int(i), np.uint8) for i in env_ids])
+        return torch.stack([torch.full((H, W, 3), 200 + i, dtype=torch.uint8, device=self.device) for i in env_ids])
 
     def step(self, joint_targets, start_joint_state):
         FakeModel.chunks += 1
-        FakeModel.steps.append((joint_targets.copy(), start_joint_state.copy()))
-        out = np.zeros((self.num_envs, T, H, W, 3), np.uint8)
+        FakeModel.steps.append((joint_targets.cpu().numpy().copy(), start_joint_state.cpu().numpy().copy()))
+        out = torch.zeros((self.num_envs, T, H, W, 3), dtype=torch.uint8, device=self.device)
         for t in range(T):
             out[:, t] = 10 * FakeModel.chunks + t
         return out
@@ -68,7 +69,7 @@ def write_manifest(directory, states=None, split="train"):
 
 
 @contextlib.contextmanager
-def world_model_sim(directory, num_envs=N, envs_per_reset_record=N, states=None, split="train"):
+def world_model_sim(directory, num_envs=N, envs_per_reset_record=N, states=None, split="train", device="cpu"):
     """A simulation context on the world-model backend. Yields the simulation."""
     FakeModel.chunks, FakeModel.steps, FakeModel.resets = 0, [], []
     physics = WorldModelCfg(
@@ -77,5 +78,5 @@ def world_model_sim(directory, num_envs=N, envs_per_reset_record=N, states=None,
         split=split,
         envs_per_reset_record=envs_per_reset_record,
     )
-    with sim_utils.build_simulation_context(sim_cfg=SimulationCfg(dt=DT, device="cpu", physics=physics)) as sim:
+    with sim_utils.build_simulation_context(sim_cfg=SimulationCfg(dt=DT, device=device, physics=physics)) as sim:
         yield sim
