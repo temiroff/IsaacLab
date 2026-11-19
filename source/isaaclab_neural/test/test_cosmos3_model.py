@@ -6,8 +6,11 @@
 """The Cosmos3 client against the world-model service, with a fake model in place of the Cosmos Framework."""
 
 import socket
+import subprocess
+import sys
 import threading
 import time
+from contextlib import suppress
 
 import numpy as np
 import pytest
@@ -51,8 +54,7 @@ class FakeSession:
         if self.model.fail:
             raise RuntimeError("generation failed")
         self.model.controls.append(controls.copy())
-        shape = (self.num_envs, T, H, W, 3)
-        return torch.full(shape, len(self.model.controls), dtype=torch.uint8, device=self.model.capabilities["device"])
+        return torch.full((self.num_envs, T, H, W, 3), len(self.model.controls), dtype=torch.uint8)
 
     def close(self):
         self.model.closed_sessions += 1
@@ -61,15 +63,10 @@ class FakeSession:
 class FakeWorldModel:
     """The service side of a world model, as the Cosmos3 service exposes it."""
 
-    def __init__(self, device="cpu"):
-        self.capabilities = {
-            "kind": "world_model",
-            "device": device,
-            "chunk_length": T,
-            "fps": 30,
-            "image_size": [H, W],
-            "max_envs": None,
-        }
+    capabilities = {"kind": "world_model", "device": "cpu", "chunk_length": T, "fps": 30, "image_size": [H, W]}
+
+    def __init__(self):
+        self.capabilities = {**self.capabilities, "max_envs": None}
         self.resets, self.controls, self.closed_sessions, self.fail = [], [], 0, False
 
     def warmup(self):
@@ -83,11 +80,11 @@ class FakeWorldModel:
 
 
 @pytest.fixture
-def service(request):
+def service():
     with socket.socket() as probe:
         probe.bind(("127.0.0.1", 0))
         endpoint = f"tcp://127.0.0.1:{probe.getsockname()[1]}"
-    model = FakeWorldModel(getattr(request, "param", "cpu"))
+    model = FakeWorldModel()
     thread = threading.Thread(
         target=serve, args=(model, endpoint), kwargs={"handler": handle_world_model_connection}, daemon=True
     )
@@ -155,15 +152,75 @@ def test_cuda_ipc_is_refused_with_its_reason_when_unavailable(service, tmp_path)
         model.reset([0], start_images(tmp_path, 1), ["unfold"], [0])
 
 
+_GPU_SERVICE = """
+import sys
+
+import torch
+
+from isaaclab_experimental.cosmos.server.service import serve
+from isaaclab_experimental.cosmos.server.world_model import handle_world_model_connection
+
+T, H, W = 4, 6, 8
+
+
+class Session:
+    chunks = 0
+
+    def reset(self, env_ids, images, prompts, seeds):
+        return torch.from_numpy(images.copy())
+
+    def step(self, controls):
+        Session.chunks += 1
+        return torch.full((len(controls), T, H, W, 3), Session.chunks, dtype=torch.uint8, device="cuda:0")
+
+    def close(self):
+        pass
+
+
+class Model:
+    capabilities = {
+        "kind": "world_model", "device": "cuda:0", "chunk_length": T, "fps": 30, "image_size": [H, W], "max_envs": None
+    }
+
+    def warmup(self):
+        pass
+
+    def open_session(self, num_envs):
+        return Session()
+
+    def close(self):
+        pass
+
+
+serve(Model(), sys.argv[1], handler=handle_world_model_connection)
+"""
+
+
 @pytest.mark.skipif(not (torch.cuda.is_available() and _cuda_ipc.available()), reason="needs CUDA IPC (Linux)")
-@pytest.mark.parametrize("service", ["cuda:0"], indirect=True)
-def test_chunks_reach_the_simulation_device_through_cuda_ipc(service, tmp_path):
-    fake, endpoint = service
-    model = Cosmos3Model(Cosmos3Cfg(endpoint=endpoint, timeout=5, transport="cuda_ipc"), 2, "cuda:0")
-    model.reset([0, 1], start_images(tmp_path, 2), ["unfold", "fold"], [3, 4])
-    assert model.transport == "cuda_ipc"
-    for chunk in (1, 2):
-        frames = model.step_controls(np.zeros((2, T, NUM_CONTROLS), np.float32))
-        assert frames.device == torch.device("cuda:0") and (frames == chunk).all()
-    model.close()
-    assert fake.closed_sessions == 1
+def test_chunks_reach_the_simulation_device_through_cuda_ipc(tmp_path):
+    # CUDA opens an IPC handle only in another process than the one that exported it, so the service runs in its own.
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        endpoint = f"tcp://127.0.0.1:{probe.getsockname()[1]}"
+    service = subprocess.Popen([sys.executable, "-c", _GPU_SERVICE, endpoint])
+    try:
+        for _ in range(600):
+            try:
+                _protocol.request(endpoint, {"op": "status"}, timeout=1)
+                break
+            except ConnectionError:
+                assert service.poll() is None, "the world-model service exited"
+                time.sleep(0.1)
+        model = Cosmos3Model(Cosmos3Cfg(endpoint=endpoint, timeout=10, transport="cuda_ipc"), 2, "cuda:0")
+        model.reset([0, 1], start_images(tmp_path, 2), ["unfold", "fold"], [3, 4])
+        assert model.transport == "cuda_ipc"
+        for chunk in (1, 2):
+            frames = model.step_controls(np.zeros((2, T, NUM_CONTROLS), np.float32))
+            assert frames.device == torch.device("cuda:0") and (frames == chunk).all()
+        model.close()
+        # The client released the buffer before closing, so the service freed it and serves the next session.
+        assert not _protocol.request(endpoint, {"op": "status"}, timeout=2)[0]["session_active"]
+    finally:
+        with suppress(OSError):
+            _protocol.request(endpoint, {"op": "shutdown"}, timeout=2)
+        service.wait(timeout=30)

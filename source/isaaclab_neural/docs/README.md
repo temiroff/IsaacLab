@@ -105,13 +105,14 @@ uv run --project "$COSMOS_FRAMEWORK_ROOT" --no-sync isaaclab-cosmos-world-model-
 Wait for `Cosmos ready at ...`, then, in the Isaac Lab environment:
 
 ```bash
-uv sync --extra importers
+uv sync --extra importers --extra video
 uv run python scripts/tools/cosmos/cosmos3_replay.py --output outputs/cosmos3/replay
 ```
 
 `prepare_medical_pad.py` checks the model files listed in the task's
 [`artifacts.json`](../../isaaclab_tasks/isaaclab_tasks/contrib/medical_pad_unfold/assets/artifacts.json) and
-points the world model's config at them. The replay script drives `Cosmos3Model` with recorded controls and writes
+points the world model's config at them; it also copies the Framework's action statistics, which the task's joint
+mapping reads in the Isaac Lab environment. The replay script drives `Cosmos3Model` with recorded controls and writes
 `generated.mp4`.
 
 `Cosmos3Model.step` converts joint targets to 59 normalized controls with the task's `JointMappingCfg`, so the robot

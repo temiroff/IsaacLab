@@ -55,13 +55,15 @@ def main():
         raise SystemExit("Missing model files (run with --download):\n" + "\n".join(map(str, missing)))
 
     # The saved world model config refers to the VAE, the tokenizer and the Qwen3-VL config of the Cosmos Framework.
-    reasoner = (
-        Path(importlib.util.find_spec("cosmos_framework").origin).parent
-        / "model/generator/reasoner/qwen3_vl/configs/Qwen3-VL-8B-Instruct.json"
-    )
+    framework = Path(importlib.util.find_spec("cosmos_framework").origin).parent
+    reasoner = framework / "model/generator/reasoner/qwen3_vl/configs/Qwen3-VL-8B-Instruct.json"
     qwen_config = models / "world_model/resources" / reasoner.name
     qwen_config.parent.mkdir(parents=True, exist_ok=True)
     shutil.copyfile(reasoner, qwen_config)
+    # The task's joint mapping normalizes controls with these statistics. It runs in Isaac Lab, where the Framework
+    # is not installed, so it reads this copy.
+    stats = framework / "data/generator/action/normalizers/global_asinh_v1_backward_anchored_gripper_metric.json"
+    shutil.copyfile(stats, qwen_config.parent / stats.name)
     config_file = models / "world_model/config.json"
     config = json.loads(config_file.read_text())
 

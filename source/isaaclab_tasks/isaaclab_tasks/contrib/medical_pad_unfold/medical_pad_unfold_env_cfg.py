@@ -71,7 +71,11 @@ class MedicalPadPhysicsCfg(PresetCfg):
     """
 
     default: WorldModelCfg = WorldModelCfg(
-        model=Cosmos3Cfg(joint_mapping=H2JointMappingCfg()),
+        model=Cosmos3Cfg(
+            joint_mapping=H2JointMappingCfg(
+                global_stats_path=f"{MODEL_DIR}/world_model/resources/global_asinh_v1_backward_anchored_gripper_metric.json"
+            )
+        ),
         reset_manifest=str(ASSETS / "resets.json"),
     )
 

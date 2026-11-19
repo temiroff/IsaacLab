@@ -10,7 +10,7 @@ from __future__ import annotations
 import json
 import re
 import xml.etree.ElementTree as ET
-from importlib.resources import files
+from dataclasses import MISSING
 from pathlib import Path
 
 import numpy as np
@@ -127,16 +127,8 @@ class _H2FK:
         return np.stack(wrists, axis=1), np.stack(tips, axis=1)
 
 
-def _load_stats(path=None):
-    if path is None:
-        data = (
-            files("cosmos_framework")
-            .joinpath("data/generator/action/normalizers/global_asinh_v1_backward_anchored_gripper_metric.json")
-            .read_bytes()
-        )
-    else:
-        data = Path(path).read_bytes()
-    stats = json.loads(data)["global"]
+def _load_stats(path):
+    stats = json.loads(Path(path).read_bytes())["global"]
     low, high = np.array(stats["q01"]), np.array(stats["q99"])
     return (low + high) / 2, np.maximum((high - low) / 2, 1e-8)
 
@@ -206,8 +198,10 @@ class H2JointMappingCfg(JointMappingCfg):
     urdf_path: str = str(H2_URDF)
     """The mesh-free H2 description whose forward kinematics give the wrist and fingertip poses."""
 
-    global_stats_path: str | None = None
-    """Normalization statistics. The default is the Cosmos Framework's."""
+    global_stats_path: str = MISSING
+    """Normalization statistics of the Cosmos Framework (``global_asinh_v1_backward_anchored_gripper_metric.json``).
+    The Framework runs in the service's environment, so ``prepare_medical_pad.py`` copies the file next to the
+    checkpoints."""
 
 
 class H2JointMapping:

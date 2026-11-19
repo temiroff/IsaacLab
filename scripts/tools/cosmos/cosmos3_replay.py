@@ -13,6 +13,7 @@ Usage:
 
 .. code-block:: bash
 
+    uv sync --extra video  # imageio, through moviepy
     uv run python scripts/tools/cosmos/cosmos3_replay.py --output outputs/cosmos3/replay
 """
 
