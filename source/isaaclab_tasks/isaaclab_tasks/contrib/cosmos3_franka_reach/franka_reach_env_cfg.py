@@ -1,0 +1,183 @@
+# Copyright (c) 2022-2026, The Isaac Lab Project Developers (https://github.com/isaac-sim/IsaacLab/blob/main/CONTRIBUTORS.md).
+# All rights reserved.
+#
+# SPDX-License-Identifier: BSD-3-Clause
+
+"""Franka reach, with the public Cosmos3 Sim-Bimanual checkpoint imagining the camera view instead of physics.
+
+The task is written like any manager-based task: a Franka arm, a camera, joint-position actions, joint and image
+observations and a reach reward. The reward follows the hand from the joint state with forward kinematics, so it does
+not depend on the generated frames. The ``physics=`` preset selects the world-model backend; no physics engine runs.
+Its reset records are start images that Isaac Lab rendered with PhysX and RTX
+(``scripts/tools/cosmos/render_franka_reset_records.py``).
+"""
+
+from __future__ import annotations
+
+import math
+from pathlib import Path
+
+from isaaclab.assets import ArticulationCfg
+from isaaclab.envs import ManagerBasedRLEnvCfg
+from isaaclab.envs.mdp import JointPositionActionCfg, action_rate_l2, image_rgb, joint_pos_rel, time_out
+from isaaclab.managers import ObservationGroupCfg as ObsGroup
+from isaaclab.managers import ObservationTermCfg as ObsTerm
+from isaaclab.managers import RewardTermCfg as RewTerm
+from isaaclab.managers import SceneEntityCfg
+from isaaclab.managers import TerminationTermCfg as DoneTerm
+from isaaclab.scene import InteractiveSceneCfg
+from isaaclab.sensors import CameraCfg
+from isaaclab.sim.spawners.sensors.sensors_cfg import PinholeCameraCfg
+from isaaclab.utils import configclass, replace
+
+from isaaclab_neural.models.cosmos3 import Cosmos3Cfg
+from isaaclab_neural.physics import WorldModelCfg
+from isaaclab_neural.renderers import WorldModelRendererCfg
+
+from isaaclab_tasks.utils import PresetCfg
+
+from isaaclab_assets import FRANKA_PANDA_CFG
+
+from .franka_mapping import FRANKA_JOINT_NAMES, FrankaJointMappingCfg
+from .mdp import TcpGoalDistance
+
+ASSETS = Path(__file__).with_name("assets")
+CHECKPOINT = ".pretrained_checkpoints/Cosmos3-Nano-Sim-Bimanual"
+"""Where ``hf download nvidia/Cosmos3-Nano-Sim-Bimanual --local-dir`` puts the checkpoint, relative to the working
+directory."""
+
+CHUNK = 16
+"""Frames the world model generates, and joint targets it consumes, per model step."""
+
+FPS = 30
+IMAGE_SIZE = (480, 640)
+"""Height and width of the start images and of the generated frames, those of the checkpoint's YAM examples."""
+
+GOAL = (0.5, 0.15, 0.25)
+"""Position the point between the fingertips reaches for, in the robot's base frame [m]."""
+
+_CAMERA_PITCH = math.radians(50.0)
+
+
+@configclass
+class FrankaReachPhysicsCfg(PresetCfg):
+    """Backends of the task. Only the world model drives it, so it is also the default.
+
+    The Cosmos3 service serves the checkpoint in session mode (``--mode session``), which keeps the distilled
+    checkpoint's causal history and samples with its fixed four-step schedule; it serves one environment.
+    """
+
+    default: WorldModelCfg = WorldModelCfg(
+        model=Cosmos3Cfg(
+            domain_name="xdof_yam",
+            joint_mapping=FrankaJointMappingCfg(
+                global_stats_path=(
+                    f"{CHECKPOINT}/cosmos3_nano_sim_bimanual_action_sources/"
+                    "ae695e2c643a5626b3c3564f00705aa3a83ab0da7640549c7340db71172594b0.json"
+                )
+            ),
+        ),
+        reset_manifest=str(ASSETS / "resets.json"),
+    )
+
+
+@configclass
+class FrankaReachSceneCfg(InteractiveSceneCfg):
+    """The Franka arm and the camera whose view the world model imagines.
+
+    The camera looks over the robot's base at the table in front of it, as the YAM examples of the checkpoint look at
+    their arms. ``render_franka_reset_records.py`` renders the start images with this robot and camera.
+    """
+
+    robot: ArticulationCfg = replace(
+        FRANKA_PANDA_CFG, prim_path="{ENV_REGEX_NS}/Robot", joint_ordering=FRANKA_JOINT_NAMES
+    )
+    camera: CameraCfg = CameraCfg(
+        prim_path="{ENV_REGEX_NS}/Camera",
+        update_period=0.0,
+        height=IMAGE_SIZE[0],
+        width=IMAGE_SIZE[1],
+        data_types=["rgb"],
+        frame_history_length=CHUNK,
+        spawn=PinholeCameraCfg(focal_length=13.6, clipping_range=(0.01, 20.0)),
+        offset=CameraCfg.OffsetCfg(
+            pos=(-0.35, 0.0, 0.95),
+            rot=(0.0, math.sin(_CAMERA_PITCH / 2), 0.0, math.cos(_CAMERA_PITCH / 2)),
+            convention="world",
+        ),
+        renderer_cfg=WorldModelRendererCfg(),
+    )
+
+
+@configclass
+class ActionsCfg:
+    """Arm joint-position targets around the reset record's pose, as in the Franka reach task."""
+
+    arm = JointPositionActionCfg(asset_name="robot", joint_names=["panda_joint.*"], scale=0.5, use_default_offset=True)
+
+
+@configclass
+class ObservationsCfg:
+    """Joint positions and the camera's image, in separate groups so an RL library can encode the image."""
+
+    @configclass
+    class PolicyCfg(ObsGroup):
+        joint_pos = ObsTerm(func=joint_pos_rel)
+
+        def __post_init__(self) -> None:
+            self.enable_corruption = False
+
+    @configclass
+    class ImageCfg(ObsGroup):
+        rgb = ObsTerm(
+            func=image_rgb,
+            params={"sensor_cfg": SceneEntityCfg("camera"), "data_type": "rgb", "channel_first": True},
+        )
+
+        def __post_init__(self) -> None:
+            self.enable_corruption = False
+
+    policy: PolicyCfg = PolicyCfg()
+    image: ImageCfg = ImageCfg()
+
+
+@configclass
+class EventCfg:
+    """No reset event: the world-model articulation starts each episode from a reset record when it resets.
+
+    This replaces the default ``reset_scene_to_default``, which also resets the root pose, and the world model has
+    none."""
+
+
+@configclass
+class RewardsCfg:
+    """The reach rewards of the Franka reach task, on the forward kinematics of the joint state."""
+
+    tcp_distance = RewTerm(func=TcpGoalDistance, weight=-0.2, params={"goal": GOAL})
+    tcp_distance_tanh = RewTerm(func=TcpGoalDistance, weight=0.1, params={"goal": GOAL, "std": 0.1})
+    action_rate = RewTerm(func=action_rate_l2, weight=-1.0e-4)
+
+
+@configclass
+class TerminationsCfg:
+    time_out = DoneTerm(func=time_out, time_out=True)
+
+
+@configclass
+class FrankaReachEnvCfg(ManagerBasedRLEnvCfg):
+    """Move the Franka gripper to :data:`GOAL` while Cosmos3 imagines the camera view."""
+
+    scene: FrankaReachSceneCfg = FrankaReachSceneCfg(num_envs=1, env_spacing=2.5)
+    observations: ObservationsCfg = ObservationsCfg()
+    actions: ActionsCfg = ActionsCfg()
+    events: EventCfg = EventCfg()
+    rewards: RewardsCfg = RewardsCfg()
+    terminations: TerminationsCfg = TerminationsCfg()
+
+    def __post_init__(self) -> None:
+        # One environment step is one frame and one joint target; the model runs once per chunk of frames.
+        self.decimation = 1
+        self.sim.dt = 1.0 / FPS
+        # 8 chunks, so episodes end on chunk boundaries where the world model can be reset.
+        self.episode_length_s = 8 * CHUNK / FPS
+        self.sim.physics = FrankaReachPhysicsCfg()

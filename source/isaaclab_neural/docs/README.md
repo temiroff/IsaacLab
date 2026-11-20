@@ -111,6 +111,48 @@ serves one. With the service on the same machine and a GPU this process can acce
 (CUDA IPC, Linux); otherwise they go through the socket, which carries about 16 environments of 16 frames at
 480 x 640 per message. `Cosmos3Cfg.transport` forces either one.
 
+### The Franka reach task
+
+`Isaac-Cosmos3-Franka-Reach-v0` runs this workflow with public weights only, the
+[`nvidia/Cosmos3-Nano-Sim-Bimanual`](https://huggingface.co/nvidia/Cosmos3-Nano-Sim-Bimanual) checkpoint:
+
+1. Isaac Lab renders each reset record's start image with PhysX and RTX: `render_franka_reset_records.py` poses the
+   Franka arm at sampled joint positions, renders the task's camera and writes the images, joint states and prompt to
+   the task's `resets.json`.
+2. From there Cosmos3 is the physics and the renderer. `FrankaJointMappingCfg` maps each chunk's joint targets through
+   forward kinematics to hand poses relative to the hand at the start of the chunk, plus the finger width, and encodes
+   them as the right wrist of the checkpoint's `xdof_yam` domain (`Cosmos3Cfg.domain_name`), normalized with the
+   statistics the checkpoint ships.
+3. A policy acts with joint-position targets around the record's pose, as in the Franka reach task, and sees the
+   generated image and the joint positions. The reach reward follows the fingertips from the joint state with the same
+   forward kinematics, so it does not depend on what the model draws.
+
+The checkpoint is distilled to a fixed four-step schedule, which the service samples in session mode; session mode
+serves one environment. Download the checkpoint and start the service from the Isaac Lab checkout, with the Framework
+environment:
+
+```bash
+cd "$ISAAC_LAB_ROOT"
+uv run --project "$COSMOS_FRAMEWORK_ROOT" --no-sync hf download nvidia/Cosmos3-Nano-Sim-Bimanual     --local-dir .pretrained_checkpoints/Cosmos3-Nano-Sim-Bimanual
+export LD_LIBRARY_PATH=
+uv run --project "$COSMOS_FRAMEWORK_ROOT" --no-sync isaaclab-cosmos-world-model-server     --checkpoint .pretrained_checkpoints/Cosmos3-Nano-Sim-Bimanual --mode session
+```
+
+Then, in the Isaac Lab environment, render new reset records (the task includes a set), run a scripted sweep of the
+arm through a few episodes into `rollout.mp4`, train with PPO, and record the trained policy:
+
+```bash
+uv sync --extra video
+uv run python scripts/tools/cosmos/render_franka_reset_records.py
+uv run python scripts/tools/cosmos/cosmos3_franka_rollout.py --output outputs/cosmos3/franka_sweep
+uv run isaaclab train --rl_library rsl_rl --task Isaac-Cosmos3-Franka-Reach-v0 --max_iterations 10
+uv run python scripts/tools/cosmos/cosmos3_franka_rollout.py --output outputs/cosmos3/franka_policy     --checkpoint logs/rsl_rl/cosmos3_franka_reach/<run>/model_9.pt
+```
+
+The video starts each episode with its RTX start image, followed by the generated frames. The model was trained on
+other arms (AgiBot, YAM, BEHAVIOR-1K) and not on a Franka, so expect the arm's appearance and its response to the
+controls to drift; the task demonstrates the workflow, not a policy that transfers.
+
 ## Tests
 
 ```bash
