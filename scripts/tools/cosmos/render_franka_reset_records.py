@@ -45,11 +45,16 @@ from isaaclab_tasks.contrib.cosmos3_franka_reach import franka_reach_env_cfg as 
 from isaaclab_tasks.contrib.cosmos3_franka_reach.franka_mapping import hand_pose
 
 PROMPT = (
-    "The scene opens in a high-angle, wide landscape shot of a compact robot work cell, sharply focused from"
-    " foreground to background. A single white Franka robotic arm with dark gray joint housings and a two-finger"
-    " parallel gripper is mounted at the bottom center of the frame, its base partly cropped by the bottom edge, and"
-    " reaches forward over a plain brown tabletop that fills the middle of the frame. A flat gray floor lies beyond"
-    " the table. Even, diffuse overhead lighting casts soft shadows in a controlled laboratory mood. The arm moves its"
+    "The scene opens directly into an overhead wide shot from a high, nearly vertical angle in landscape framing,"
+    " sharply focused across a compact robot work cell with even overhead lighting, soft shadows, moderate contrast,"
+    " and a neutral palette of white, black, warm brown and light gray that gives the setup a clean, methodical"
+    " quality. A large checkered floor of alternating light gray and off-white squares, with small green markers at"
+    " some of the corners, fills the background and both sides. A plain brown rectangular table with a matte top"
+    " stands in the middle of the frame, its far edge in the upper third and its near side face dropping away toward"
+    " the bottom of the frame. A single white articulated robotic arm with black joint caps and a two-finger parallel"
+    " gripper rises from the bottom center of the frame, its shoulder and base partly cropped by the bottom edge, and"
+    " reaches forward over the table with its gripper pointing down above the tabletop. The arm is the largest"
+    " subject, the table is larger than the arm's reach, and the floor is farthest from the camera. The arm moves its"
     " gripper smoothly to a point above the table."
 )
 """Task description of every record, in the style of the checkpoint's YAM prompts."""
@@ -77,10 +82,10 @@ class RenderSceneCfg(task.FrankaReachSceneCfg):
         ),
     )
     dome_light = AssetBaseCfg(
-        prim_path="/World/DomeLight", spawn=sim_utils.DomeLightCfg(color=(0.9, 0.9, 0.9), intensity=1500.0)
+        prim_path="/World/DomeLight", spawn=sim_utils.DomeLightCfg(color=(0.9, 0.9, 0.9), intensity=400.0)
     )
     distant_light = AssetBaseCfg(
-        prim_path="/World/DistantLight", spawn=sim_utils.DistantLightCfg(intensity=2000.0, angle=10.0)
+        prim_path="/World/DistantLight", spawn=sim_utils.DistantLightCfg(intensity=500.0, angle=10.0)
     )
 
 
@@ -113,6 +118,7 @@ def main():
         settle(sim, scene, 120)
 
         records, fk_error = [], 0.0
+        task.ASSETS.mkdir(exist_ok=True)
         splits = ["train"] * args_cli.num_train + ["validation"] * args_cli.num_validation
         counts = dict.fromkeys(splits, 0)
         for split in splits:

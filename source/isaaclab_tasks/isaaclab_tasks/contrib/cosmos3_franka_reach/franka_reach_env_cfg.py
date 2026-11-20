@@ -56,7 +56,7 @@ IMAGE_SIZE = (480, 640)
 GOAL = (0.5, 0.15, 0.25)
 """Position the point between the fingertips reaches for, in the robot's base frame [m]."""
 
-_CAMERA_PITCH = math.radians(50.0)
+_CAMERA_PITCH = math.radians(62.0)
 
 
 @configclass
@@ -85,8 +85,9 @@ class FrankaReachPhysicsCfg(PresetCfg):
 class FrankaReachSceneCfg(InteractiveSceneCfg):
     """The Franka arm and the camera whose view the world model imagines.
 
-    The camera looks over the robot's base at the table in front of it, as the YAM examples of the checkpoint look at
-    their arms. ``render_franka_reset_records.py`` renders the start images with this robot and camera.
+    The camera looks down at the table in front of the robot from a high, nearly vertical angle just behind its base,
+    as the YAM examples of the checkpoint look at their arms; from there the elbow does not hide the gripper.
+    ``render_franka_reset_records.py`` renders the start images with this robot and camera.
     """
 
     robot: ArticulationCfg = replace(
@@ -101,7 +102,7 @@ class FrankaReachSceneCfg(InteractiveSceneCfg):
         frame_history_length=CHUNK,
         spawn=PinholeCameraCfg(focal_length=13.6, clipping_range=(0.01, 20.0)),
         offset=CameraCfg.OffsetCfg(
-            pos=(-0.6, 0.0, 1.3),
+            pos=(-0.15, 0.0, 1.45),
             rot=(0.0, math.sin(_CAMERA_PITCH / 2), 0.0, math.cos(_CAMERA_PITCH / 2)),
             convention="world",
         ),
