@@ -1,0 +1,82 @@
+[
+  {
+    "image": "train_00.png",
+    "state": [
+      -0.061279233545064926,
+      -0.5475395917892456,
+      -0.29098013043403625,
+      -2.57598614692688,
+      0.2693970203399658,
+      3.207237720489502,
+      0.6901229023933411,
+      0.039999932050704956,
+      0.03999383747577667
+    ],
+    "prompt": "The scene opens directly into an overhead wide shot from a high, nearly vertical angle in landscape framing, sharply focused across a compact robot work cell with even overhead lighting, soft shadows, moderate contrast, and a neutral palette of white, black, warm brown and light gray that gives the setup a clean, methodical quality. A large checkered floor of alternating light gray and off-white squares, with small green markers at some of the corners, fills the background and both sides. A plain brown rectangular table with a matte top stands in the middle of the frame, its far edge in the upper third and its near side face dropping away toward the bottom of the frame. A single white articulated robotic arm with black joint caps and a two-finger parallel gripper rises from the bottom center of the frame, its shoulder and base partly cropped by the bottom edge, and reaches forward over the table with its gripper pointing down above the tabletop. The arm is the largest subject, the table is larger than the arm's reach, and the floor is farthest from the camera. The arm moves its gripper smoothly to a point above the table.",
+    "split": "train"
+  },
+  {
+    "image": "train_01.png",
+    "state": [
+      0.2834351360797882,
+      -0.38051894307136536,
+      -0.018150778487324715,
+      -2.937098264694214,
+      -0.10086017847061157,
+      2.9543678760528564,
+      0.8994371891021729,
+      0.03999999910593033,
+      0.03999970108270645
+    ],
+    "prompt": "The scene opens directly into an overhead wide shot from a high, nearly vertical angle in landscape framing, sharply focused across a compact robot work cell with even overhead lighting, soft shadows, moderate contrast, and a neutral palette of white, black, warm brown and light gray that gives the setup a clean, methodical quality. A large checkered floor of alternating light gray and off-white squares, with small green markers at some of the corners, fills the background and both sides. A plain brown rectangular table with a matte top stands in the middle of the frame, its far edge in the upper third and its near side face dropping away toward the bottom of the frame. A single white articulated robotic arm with black joint caps and a two-finger parallel gripper rises from the bottom center of the frame, its shoulder and base partly cropped by the bottom edge, and reaches forward over the table with its gripper pointing down above the tabletop. The arm is the largest subject, the table is larger than the arm's reach, and the floor is farthest from the camera. The arm moves its gripper smoothly to a point above the table.",
+    "split": "train"
+  },
+  {
+    "image": "train_02.png",
+    "state": [
+      -0.2877804636955261,
+      -0.38906246423721313,
+      0.22268924117088318,
+      -2.65351939201355,
+      0.09805049002170563,
+      2.946333169937134,
+      0.6592739224433899,
+      0.039997998625040054,
+      0.03999999910593033
+    ],
+    "prompt": "The scene opens directly into an overhead wide shot from a high, nearly vertical angle in landscape framing, sharply focused across a compact robot work cell with even overhead lighting, soft shadows, moderate contrast, and a neutral palette of white, black, warm brown and light gray that gives the setup a clean, methodical quality. A large checkered floor of alternating light gray and off-white squares, with small green markers at some of the corners, fills the background and both sides. A plain brown rectangular table with a matte top stands in the middle of the frame, its far edge in the upper third and its near side face dropping away toward the bottom of the frame. A single white articulated robotic arm with black joint caps and a two-finger parallel gripper rises from the bottom center of the frame, its shoulder and base partly cropped by the bottom edge, and reaches forward over the table with its gripper pointing down above the tabletop. The arm is the largest subject, the table is larger than the arm's reach, and the floor is farthest from the camera. The arm moves its gripper smoothly to a point above the table.",
+    "split": "train"
+  },
+  {
+    "image": "train_03.png",
+    "state": [
+      0.17238973081111908,
+      -0.7832176685333252,
+      -0.17186850309371948,
+      -2.648850440979004,
+      0.11803670227527618,
+      3.1677768230438232,
+      0.5807545781135559,
+      0.03999999165534973,
+      0.039999961853027344
+    ],
+    "prompt": "The scene opens directly into an overhead wide shot from a high, nearly vertical angle in landscape framing, sharply focused across a compact robot work cell with even overhead lighting, soft shadows, moderate contrast, and a neutral palette of white, black, warm brown and light gray that gives the setup a clean, methodical quality. A large checkered floor of alternating light gray and off-white squares, with small green markers at some of the corners, fills the background and both sides. A plain brown rectangular table with a matte top stands in the middle of the frame, its far edge in the upper third and its near side face dropping away toward the bottom of the frame. A single white articulated robotic arm with black joint caps and a two-finger parallel gripper rises from the bottom center of the frame, its shoulder and base partly cropped by the bottom edge, and reaches forward over the table with its gripper pointing down above the tabletop. The arm is the largest subject, the table is larger than the arm's reach, and the floor is farthest from the camera. The arm moves its gripper smoothly to a point above the table.",
+    "split": "train"
+  },
+  {
+    "image": "validation_00.png",
+    "state": [
+      0.26072588562965393,
+      -0.3645396828651428,
+      -0.29227983951568604,
+      -3.0187909603118896,
+      0.27728039026260376,
+      2.7553346157073975,
+      0.7319798469543457,
+      0.03999997675418854,
+      0.039995159953832626
+    ],
+    "prompt": "The scene opens directly into an overhead wide shot from a high, nearly vertical angle in landscape framing, sharply focused across a compact robot work cell with even overhead lighting, soft shadows, moderate contrast, and a neutral palette of white, black, warm brown and light gray that gives the setup a clean, methodical quality. A large checkered floor of alternating light gray and off-white squares, with small green markers at some of the corners, fills the background and both sides. A plain brown rectangular table with a matte top stands in the middle of the frame, its far edge in the upper third and its near side face dropping away toward the bottom of the frame. A single white articulated robotic arm with black joint caps and a two-finger parallel gripper rises from the bottom center of the frame, its shoulder and base partly cropped by the bottom edge, and reaches forward over the table with its gripper pointing down above the tabletop. The arm is the largest subject, the table is larger than the arm's reach, and the floor is farthest from the camera. The arm moves its gripper smoothly to a point above the table.",
+    "split": "validation"
+  }
+]
