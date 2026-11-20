@@ -3,17 +3,18 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
-"""Render the reset records of the world-model Franka reach task with PhysX and RTX.
+"""Render the reset records of the world-model Franka reach task with OvPhysX and OVRTX, without Kit.
 
 Each record is a start image of the task's camera, the Franka joint state the image shows and a prompt. The script
-poses the arm at sampled joint positions around its default pose, lets PhysX hold it there, renders the camera with
-RTX and writes the images and ``resets.json`` that ``WorldModelCfg.reset_manifest`` reads. It also checks the task's
+poses the arm at sampled joint positions around its default pose, lets OvPhysX hold it there, renders the camera with
+OVRTX and writes the images and ``resets.json`` that ``WorldModelCfg.reset_manifest`` reads. It also checks the task's
 forward kinematics against the simulated hand.
 
 Usage:
 
 .. code-block:: bash
 
+    uv sync --extra ov
     uv run python scripts/tools/cosmos/render_franka_reset_records.py
 """
 
@@ -29,11 +30,11 @@ parser.add_argument("--num_validation", type=int, default=1, help="Number of val
 parser.add_argument("--seed", type=int, default=0, help="Seed of the sampled joint positions.")
 add_launcher_args(parser)
 args_cli = parser.parse_args()
-args_cli.enable_cameras = True
 
 import numpy as np
 import torch
-from isaaclab_physx.renderers import IsaacRtxRendererCfg
+from isaaclab_ov.physics import OvPhysxCfg
+from isaaclab_ov.renderers import OVRTXRendererCfg
 from PIL import Image
 
 import isaaclab.sim as sim_utils
@@ -92,12 +93,13 @@ def settle(sim, scene, steps: int) -> None:
 
 
 def main():
-    sim_cfg = sim_utils.SimulationCfg(dt=1.0 / 60.0, device=args_cli.device)
-    with launch_simulation(sim_cfg, args_cli):
+    # OvPhysX and OVRTX run without Isaac Sim / Kit.
+    sim_cfg = sim_utils.SimulationCfg(dt=1.0 / 60.0, device=args_cli.device, physics=OvPhysxCfg())
+    scene_cfg = RenderSceneCfg(num_envs=1, env_spacing=2.5)
+    # The task's camera, rendered with OVRTX instead of imagined by the world model.
+    scene_cfg.camera = replace(scene_cfg.camera, renderer_cfg=OVRTXRendererCfg(), frame_history_length=0)
+    with launch_simulation((sim_cfg, scene_cfg), args_cli):
         sim = sim_utils.SimulationContext(sim_cfg)
-        scene_cfg = RenderSceneCfg(num_envs=1, env_spacing=2.5)
-        # The task's camera, rendered with RTX instead of imagined by the world model.
-        scene_cfg.camera = replace(scene_cfg.camera, renderer_cfg=IsaacRtxRendererCfg(), frame_history_length=0)
         scene = instantiate(scene_cfg)
         sim.reset()
         robot, camera = scene["robot"], scene["camera"]

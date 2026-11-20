@@ -8,7 +8,7 @@
 The task is written like any manager-based task: a Franka arm, a camera, joint-position actions, joint and image
 observations and a reach reward. The reward follows the hand from the joint state with forward kinematics, so it does
 not depend on the generated frames. The ``physics=`` preset selects the world-model backend; no physics engine runs.
-Its reset records are start images that Isaac Lab rendered with PhysX and RTX
+Its reset records are start images that Isaac Lab rendered with OvPhysX and OVRTX, without Kit
 (``scripts/tools/cosmos/render_franka_reset_records.py``).
 """
 
