@@ -172,23 +172,40 @@ uv run isaaclab play --rl_library rsl_rl --task Isaac-Cosmos3-Franka-Reach-v0 \
 * A service on another endpoint is selected with the override `env.sim.physics.model.endpoint=unix:///path` or
   `env.sim.physics.model.endpoint=tcp://host:port`.
 
-**What needs fine-tuning, and when.** Sim-Bimanual was trained on the wrist poses and grippers of AgiBot, YAM and
-BEHAVIOR-1K arms, not on a Franka. Franka controls sent through the YAM right-wrist slot give plausible frames that
-do not follow the robot faithfully: the arm can change appearance, and its motion follows the controls only roughly.
-For a policy whose image matters:
-
-* **The model:** post-train Cosmos3 on videos and actions of the target robot, in the same `unified_v1` layout (see
-  the Framework's Sim-Bimanual post-training guide), and point `--checkpoint` at the result. Isaac Lab does not change;
-  set `Cosmos3Cfg.domain_name` to the domain of the new data and keep the joint mapping consistent with how that data
-  was encoded.
-* **The reward and terminations:** here they read the joint state, so they stay exact. A reward or termination judged
-  from images, such as a classifier, must be trained or tuned on generated frames.
-
-The rest of the task and the training run stay as they are.
-
 **What to expect.** On an RTX PRO 6000, the first chunk takes about 14 s (the service opens its session) and each
 later chunk of 16 frames about 1 s. A short PPO run shows that the loop runs (start images, generated chunks, resets,
 updates); it does not produce a useful policy.
+
+#### What needs fine-tuning
+
+**What Cosmos3 gets per chunk.** One image (the start image at a reset, then its own last frame), 16 actions (one
+per frame), the prompt and a seed. It returns 16 frames and no joint state.
+
+**How joints become actions.** The public checkpoint accepts only the action format it was trained on: per arm, a
+hand pose and a gripper opening (`unified_v1`, 59 numbers). It has no input for joint angles. The task's joint mapping
+therefore converts the Franka's 7 arm joint targets with forward kinematics into a hand pose relative to the start of
+the chunk, and the finger width into the gripper opening. It is a direct translation, with no other logic.
+
+**What is lost.** 7 joints become a 6-number hand pose, so the model is not told where the elbow is and has to guess
+the rest of the arm.
+
+**What you see.** The model was trained on AgiBot, YAM and BEHAVIOR-1K arms and never saw a Franka. The first frame
+is the rendered Franka; later frames can shorten or bend the arm or detach the gripper. In a 10-iteration PPO run,
+after the first chunk the arm turned into a shorter arm near the bottom edge and a detached copy of the gripper stayed
+on the table for the rest of the episode; after the reset, the next episode kept the arm recognizable.
+
+**The fix is fine-tuning.**
+
+1. Fine-tune Cosmos3 on videos of your robot recorded with its joint actions, so that it learns a joint-space action
+   format for that robot (for a Franka: 7 joints and the gripper to video).
+2. Replace the task's joint mapping with one that passes the joints through unchanged.
+
+Nothing else in Isaac Lab changes: the task, the reward, PPO and the commands stay the same. A reward or termination
+judged from images, such as a classifier, would also need tuning on generated frames; this task's reward reads the
+joint state and stays exact.
+
+**Other robots.** The same holds for any robot outside the trained format. A Shadow Hand's finger joints cannot be
+expressed as a hand pose and a gripper opening, so it needs a model trained on hand poses or fine-tuned on that hand.
 
 ## Tests
 
