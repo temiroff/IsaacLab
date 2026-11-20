@@ -65,12 +65,13 @@ class FakeWorldModel:
 
     def __init__(self):
         self.capabilities = {**self.capabilities, "max_envs": None}
-        self.resets, self.controls, self.closed_sessions, self.fail = [], [], 0, False
+        self.sessions, self.resets, self.controls, self.closed_sessions, self.fail = [], [], [], 0, False
 
     def warmup(self):
         pass
 
-    def open_session(self, num_envs):
+    def open_session(self, num_envs, domain_name, num_inference_steps):
+        self.sessions.append((num_envs, domain_name, num_inference_steps))
         return FakeSession(self, num_envs)
 
     def close(self):
@@ -105,9 +106,13 @@ def start_images(count):
 
 def test_the_client_reads_the_spec_resets_from_start_images_and_steps_with_mapped_controls(service):
     fake, endpoint = service
-    model = Cosmos3Model(Cosmos3Cfg(endpoint=endpoint, timeout=5, joint_mapping=MappingCfg()), 2, "cpu")
+    cfg = Cosmos3Cfg(
+        endpoint=endpoint, timeout=5, domain_name="xdof_yam", num_inference_steps=4, joint_mapping=MappingCfg()
+    )
+    model = Cosmos3Model(cfg, 2, "cpu")
     assert (model.spec().chunk_length, model.spec().image_size) == (T, (H, W))
     model.reset([0, 1], start_images(2), ["unfold", "fold"], [3, 4])
+    assert fake.sessions == [(2, "xdof_yam", 4)]
     assert fake.resets == [([0, 1], [100, 101], ["unfold", "fold"], [3, 4])]
     targets = torch.arange(2 * T * 3, dtype=torch.float32).reshape(2, T, 3)
     frames = model.step(targets, torch.tensor([[1.0, 0, 0], [5.0, 0, 0]]))
@@ -178,7 +183,7 @@ class Model:
     def warmup(self):
         pass
 
-    def open_session(self, num_envs):
+    def open_session(self, num_envs, domain_name, num_inference_steps):
         return Session()
 
     def close(self):

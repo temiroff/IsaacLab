@@ -67,10 +67,8 @@ class Cosmos3Settings:
     chunk_size: int = 16
     """Frames predicted, and controls consumed, per step. Divisible by 4."""
     fps: int = 30
-    domain_name: str = "hand_pose"
     resolution: str = "480"
     """Resolution tier of the Cosmos Framework."""
-    num_inference_steps: int = 30
     guidance: float = 1.0
     shift: float = 10.0
     use_ema_weights: bool = True
@@ -119,30 +117,39 @@ class Cosmos3WorldModel:
             **kwargs,
         ).build_setup()
         self.pipe = setup.get_inference_cls().create(setup)
-        self.contract = getattr(self.pipe.model, "_bimanual_action_contract", None) or BimanualActionContract(
-            NUM_CONTROLS, 64, {settings.domain_name: get_domain_id(settings.domain_name)}
+        # A checkpoint without its own action contract (Stage 0) accepts the domain the client names.
+        contract = getattr(self.pipe.model, "_bimanual_action_contract", None)
+        self._contract = lambda domain_name: contract or BimanualActionContract(
+            NUM_CONTROLS, 64, {domain_name: get_domain_id(domain_name)}
         )
 
     def warmup(self) -> None:
         """No-op: the model is not compiled."""
 
-    def open_session(self, num_envs: int) -> Cosmos3Session:
-        """Open a session for ``num_envs`` environments."""
+    def open_session(self, num_envs: int, domain_name: str, num_inference_steps: int) -> Cosmos3Session:
+        """Open a session for ``num_envs`` environments whose controls belong to the action domain ``domain_name``.
+
+        ``num_inference_steps`` is the number of denoising steps of window mode; session mode samples with the
+        checkpoint's fixed schedule.
+        """
         limit = self.capabilities["max_envs"]
         if limit is not None and num_envs > limit:
             raise ValueError(f"Cosmos3 {self.settings.mode} mode serves at most {limit} environments.")
-        return Cosmos3Session(self, num_envs)
+        return Cosmos3Session(self, num_envs, self._contract(domain_name), domain_name, num_inference_steps)
 
     def close(self) -> None:
-        self.pipe = self.contract = None
+        self.pipe = self._contract = None
 
 
 class Cosmos3Session:
     """The environments of one client: each one's last generated image, prompt, seed and elapsed frames."""
 
-    def __init__(self, model: Cosmos3WorldModel, num_envs: int):
+    def __init__(self, model: Cosmos3WorldModel, num_envs: int, contract, domain_name: str, num_inference_steps: int):
         self.model = model
         self.num_envs = num_envs
+        self.contract = contract
+        self.domain_name = domain_name
+        self.num_inference_steps = num_inference_steps
         self.condition: list[torch.Tensor | None] = [None] * num_envs
         self.prompts = [""] * num_envs
         self.seeds = [0] * num_envs
@@ -161,11 +168,16 @@ class Cosmos3Session:
                 self.native = self.model.pipe.open_bimanual_session(
                     vision_path=_write_png(images[0]),
                     prompt=prompts[0],
-                    domain_name=settings.domain_name,
+                    domain_name=self.domain_name,
                     fps=settings.fps,
                     seed=seeds[0],
                     resolution=settings.resolution,
                 )
+                if settings.chunk_size % self.native.action_rows:
+                    raise ValueError(
+                        f"The checkpoint steps {self.native.action_rows} controls at a time, which does not divide"
+                        f" the chunk of {settings.chunk_size}."
+                    )
                 frames = _pixels(self.native.observation)[:, -1]
             else:
                 frames = torch.from_numpy(np.ascontiguousarray(images))
@@ -184,8 +196,21 @@ class Cosmos3Session:
         model = self.model.pipe.model
         with torch.inference_mode():
             if settings.mode == "session":
-                rgb = self.native.step({"action_space": "normalized_unified_v1", "action": controls[0].tolist()})
-                frames = _pixels(rgb)
+                # The native session takes the checkpoint's own number of controls per step (8 for a chunk-2
+                # Bimanual checkpoint), so a chunk takes several.
+                rows = self.native.action_rows
+                frames = torch.cat(
+                    [
+                        _pixels(self.native.step({"action_space": "normalized_unified_v1", "action": block.tolist()}))
+                        for block in controls[0].reshape(-1, rows, controls.shape[-1])
+                    ],
+                    dim=1,
+                )
+                if tuple(frames.shape[2:4]) != settings.image_size:
+                    raise ValueError(
+                        f"The checkpoint generated {tuple(frames.shape[2:4])} frames from the start image, not"
+                        f" {settings.image_size}; give start images of the service's image size."
+                    )
             else:
                 chunks = []
                 for env in range(self.num_envs):
@@ -194,7 +219,7 @@ class Cosmos3Session:
                         guidance=settings.guidance,
                         shift=settings.shift,
                         seed=[(self.seeds[env] + self.elapsed[env]) % _SEED_LIMIT],
-                        num_steps=settings.num_inference_steps,
+                        num_steps=self.num_inference_steps,
                         n_sample=1,
                     )
                     chunks.append(_pixels((model.decode(result["vision"][0]) + 1) / 2)[:, 1:])
@@ -218,8 +243,8 @@ class Cosmos3Session:
         settings = self.model.settings
         model = self.model.pipe.model
         payload = {"action_space": "normalized_unified_v1", "action": controls.tolist()}
-        values, domains = self.model.contract.validate(
-            payload, action_count=settings.chunk_size, domain_name=settings.domain_name
+        values, domains = self.contract.validate(
+            payload, action_count=settings.chunk_size, domain_name=self.domain_name
         )
         padded = torch.zeros(settings.chunk_size, 64, dtype=torch.float32)
         padded[:, :NUM_CONTROLS] = torch.tensor(values, dtype=torch.float32)
@@ -229,7 +254,7 @@ class Cosmos3Session:
             raw_action_dim=NUM_CONTROLS,
             prompt=prompt,
             view_point="ego_view",
-            domain_name=settings.domain_name,
+            domain_name=self.domain_name,
             model_mode=ModelMode.FORWARD_DYNAMICS,
             action_chunk_size=settings.chunk_size,
             fps=settings.fps,
@@ -368,12 +393,20 @@ def handle_world_model_connection(
                     },
                 )
             elif operation == "open":
-                _check_fields(metadata, {"op", "version", "num_envs"} | ({"transport"} & metadata.keys()), arrays)
+                _check_fields(
+                    metadata,
+                    {"op", "version", "num_envs", "domain_name", "num_inference_steps"}
+                    | ({"transport"} & metadata.keys()),
+                    arrays,
+                )
                 if session is not None:
                     raise RuntimeError("This connection already has a world-model session.")
-                num_envs = metadata["num_envs"]
+                num_envs, domain_name = metadata["num_envs"], metadata["domain_name"]
+                steps = metadata["num_inference_steps"]
                 if type(num_envs) is not int or num_envs < 1:
                     raise ValueError("A world-model session needs a positive num_envs.")
+                if not isinstance(domain_name, str) or type(steps) is not int or steps < 1:
+                    raise ValueError("A world-model session names its action domain and a positive number of steps.")
                 transport = metadata.get("transport", "socket")
                 if transport not in state.transports:
                     raise ValueError(f"This Cosmos service does not offer the {transport} transport.")
@@ -381,7 +414,7 @@ def handle_world_model_connection(
                     if state.owner is not None:
                         raise RuntimeError("The world model already serves a session; close it before connecting.")
                     state.owner = token
-                session = _run_inference(state, state.model.open_session, num_envs)
+                session = _run_inference(state, state.model.open_session, num_envs, domain_name, steps)
                 reply = {"ok": True}
                 if transport == "cuda_ipc":
                     import torch

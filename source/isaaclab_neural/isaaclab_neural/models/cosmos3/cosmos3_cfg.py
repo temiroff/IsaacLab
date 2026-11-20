@@ -52,6 +52,14 @@ class Cosmos3Cfg(ModelCfg):
     this process can access directly; ``"socket"`` sends them through host memory; ``"auto"`` picks CUDA IPC when it
     is available."""
 
+    domain_name: str = "hand_pose"
+    """Action domain of the controls, one the checkpoint was trained on. It selects the domain's embedding and its
+    mask of valid controls, so it matches the domain the joint mapping encodes for."""
+
+    num_inference_steps: int = 30
+    """Denoising steps per chunk in the service's window mode. Session mode samples with the checkpoint's fixed
+    schedule (four steps for a distilled checkpoint) and ignores it."""
+
     joint_mapping: JointMappingCfg | None = None
     """Joint mapping of the robot. Needed to drive the model with joint targets; replaying recorded controls does
     not need it."""

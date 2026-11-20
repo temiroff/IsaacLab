@@ -100,7 +100,16 @@ class Cosmos3Model(WorldModel):
         self._socket = connect(self.cfg.endpoint, self.cfg.timeout)
         try:
             self.transport, service_gpu = self._select_transport()
-            send_message(self._socket, {"op": "open", "num_envs": self.num_envs, "transport": self.transport})
+            send_message(
+                self._socket,
+                {
+                    "op": "open",
+                    "num_envs": self.num_envs,
+                    "transport": self.transport,
+                    "domain_name": self.cfg.domain_name,
+                    "num_inference_steps": self.cfg.num_inference_steps,
+                },
+            )
             reply = receive_message(self._socket)[0]
             check_reply(reply)
             if self.transport == "cuda_ipc":
