@@ -101,7 +101,7 @@ class FrankaReachSceneCfg(InteractiveSceneCfg):
         frame_history_length=CHUNK,
         spawn=PinholeCameraCfg(focal_length=13.6, clipping_range=(0.01, 20.0)),
         offset=CameraCfg.OffsetCfg(
-            pos=(-0.35, 0.0, 0.95),
+            pos=(-0.6, 0.0, 1.3),
             rot=(0.0, math.sin(_CAMERA_PITCH / 2), 0.0, math.cos(_CAMERA_PITCH / 2)),
             convention="world",
         ),
