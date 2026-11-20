@@ -152,7 +152,7 @@ uv run --project "$COSMOS_FRAMEWORK_ROOT" --no-sync isaaclab-cosmos-world-model-
 Then, in the Isaac Lab environment:
 
 ```bash
-uv sync --extra ov --extra video
+uv sync --extra ov --extra rsl-rl --extra video
 # Optional: render new start images (the task includes a set). OvPhysX poses the arm and OVRTX renders the camera.
 uv run python scripts/tools/cosmos/render_franka_reset_records.py
 # Train with PPO and record the task's camera.
