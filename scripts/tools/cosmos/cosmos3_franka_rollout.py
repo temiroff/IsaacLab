@@ -52,13 +52,15 @@ def record_model(model, writer, timing: list[float]) -> None:
 
     def recording_reset(env_ids, images, prompts, seeds):
         if 0 in env_ids:
-            writer.append_data(images[env_ids.index(0)].cpu().numpy())
+            (start,) = images.values()
+            writer.append_data(start[env_ids.index(0)].cpu().numpy())
         reset(env_ids, images, prompts, seeds)
 
     def recording_step(joint_targets, start_joint_state):
         start = time.perf_counter()
         frames = step(joint_targets, start_joint_state)
-        recorded = frames[0].cpu().numpy()
+        (chunk,) = frames.values()
+        recorded = chunk[0].cpu().numpy()
         timing.append(time.perf_counter() - start)
         for frame in recorded:
             writer.append_data(frame)

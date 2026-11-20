@@ -33,6 +33,9 @@ READY = [0.0, -0.569, 0.0, -2.810, 0.0, 3.037, 0.741, 0.04, 0.04]
 class CountingModel(WorldModel):
     chunks = 0
 
+    def __init__(self, cfg, num_envs, device):
+        self.num_envs, self.device = num_envs, device
+
     def spec(self):
         return WorldModelSpec(chunk_length=CHUNK, fps=FPS, image_size=(H, W))
 
@@ -41,7 +44,7 @@ class CountingModel(WorldModel):
 
     def step(self, joint_targets, start_joint_state):
         CountingModel.chunks += 1
-        return torch.zeros(self.num_envs, CHUNK, H, W, 3, dtype=torch.uint8, device=self.device)
+        return {"camera": torch.zeros(self.num_envs, CHUNK, H, W, 3, dtype=torch.uint8, device=self.device)}
 
     def close(self):
         pass
