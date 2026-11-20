@@ -25,8 +25,6 @@ class FrankaReachPPORunnerCfg(RslRlOnPolicyRunnerCfg):
 
     # One episode of 8 chunks per rollout.
     num_steps_per_env = 8
-    # Episodes start at step 0, so their time-outs fall on chunk boundaries, where the world model can reset.
-    init_at_random_ep_len = False
     max_iterations = 1000
     save_interval = 50
     experiment_name = "cosmos3_franka_reach"
