@@ -114,47 +114,81 @@ serves one. With the service on the same machine and a GPU this process can acce
 (CUDA IPC, Linux); otherwise they go through the socket, which carries about 16 environments of 16 frames at
 480 x 640 per message. `Cosmos3Cfg.transport` forces either one.
 
-### The Franka reach task
+### Example: Franka reach on a public checkpoint
 
-`Isaac-Cosmos3-Franka-Reach-v0` runs this workflow with public weights only, the
-[`nvidia/Cosmos3-Nano-Sim-Bimanual`](https://huggingface.co/nvidia/Cosmos3-Nano-Sim-Bimanual) checkpoint:
+`Isaac-Cosmos3-Franka-Reach-v0` shows the whole workflow with public weights only, the
+[`nvidia/Cosmos3-Nano-Sim-Bimanual`](https://huggingface.co/nvidia/Cosmos3-Nano-Sim-Bimanual) checkpoint, and no
+Isaac Sim or Kit at any step.
 
-1. Isaac Lab renders each reset record's start image with PhysX and RTX: `render_franka_reset_records.py` poses the
-   Franka arm at sampled joint positions, renders the task's camera and writes the images, joint states and prompt to
-   the task's `resets.json`.
-2. From there Cosmos3 is the physics and the renderer. `FrankaJointMappingCfg` maps each chunk's joint targets through
-   forward kinematics to hand poses relative to the hand at the start of the chunk, plus the finger width, and encodes
-   them as the right wrist of the checkpoint's `xdof_yam` domain (`Cosmos3Cfg.domain_name`), normalized with the
-   statistics the checkpoint ships.
-3. A policy acts with joint-position targets around the record's pose, as in the Franka reach task, and sees the
-   generated image and the joint positions. The reach reward follows the fingertips from the joint state with the same
-   forward kinematics, so it does not depend on what the model draws.
+**What the world model replaces, and what stays Isaac Lab.** The world model is the physics and the camera: from the
+start image and the arm's joint targets it predicts the next 16 camera frames. Everything else is an ordinary
+manager-based task: the scene, the joint-position actions, the observations, the reward and terminations, the policy and
+PPO training with `rsl_rl`. The joint state comes from the joint targets, so joint observations and a reward computed
+from the joints are exact; only the image is generated.
 
-The checkpoint is distilled to a fixed four-step schedule, which the service samples in session mode; session mode
-serves one environment. Download the checkpoint and start the service from the Isaac Lab checkout, with the Framework
-environment:
+**What a task provides.** For another robot or another model, these are the pieces to replace:
+
+| Piece | In the example | What it does |
+| --- | --- | --- |
+| World model | `Cosmos3Cfg(domain_name="xdof_yam")` in `WorldModelCfg(model=...)` | The model, here the Cosmos3 service. Any `WorldModel` fits (see "Add a world model"). |
+| Joint mapping | `FrankaJointMappingCfg` | Converts a chunk of joint targets into the model's action space. Here: forward kinematics to hand poses relative to the chunk's start pose, plus finger width, as the right wrist of the checkpoint's `xdof_yam` domain, normalized with the statistics the checkpoint ships. |
+| Reset records | `assets/resets.json` and its PNGs | Start image, joint state and prompt of each episode start. `render_franka_reset_records.py` renders them with OvPhysX and OVRTX, without Kit. |
+| Camera | `CameraCfg(renderer_cfg=WorldModelRendererCfg(), frame_history_length=16)` | Shows the generated frames; placed where the start images were rendered from, at the model's 480 x 640. |
+| Reward | `TcpGoalDistance` | Distance from the fingertips to a goal, from the forward kinematics of the joint state. |
+
+**Run it.** In the Cosmos Framework environment, download the checkpoint and start the service. The checkpoint is
+distilled to a fixed four-step schedule, which the service samples in `--mode session`; session mode serves one
+environment.
 
 ```bash
 cd "$ISAAC_LAB_ROOT"
-uv run --project "$COSMOS_FRAMEWORK_ROOT" --no-sync hf download nvidia/Cosmos3-Nano-Sim-Bimanual     --local-dir .pretrained_checkpoints/Cosmos3-Nano-Sim-Bimanual
+uv run --project "$COSMOS_FRAMEWORK_ROOT" --no-sync hf download nvidia/Cosmos3-Nano-Sim-Bimanual \
+    --local-dir .pretrained_checkpoints/Cosmos3-Nano-Sim-Bimanual
 export LD_LIBRARY_PATH=
-uv run --project "$COSMOS_FRAMEWORK_ROOT" --no-sync isaaclab-cosmos-world-model-server     --checkpoint .pretrained_checkpoints/Cosmos3-Nano-Sim-Bimanual --mode session
+uv run --project "$COSMOS_FRAMEWORK_ROOT" --no-sync isaaclab-cosmos-world-model-server \
+    --checkpoint .pretrained_checkpoints/Cosmos3-Nano-Sim-Bimanual --mode session
 ```
 
-Then, in the Isaac Lab environment, render new reset records (the task includes a set), run a scripted sweep of the
-arm through a few episodes into `rollout.mp4`, train with PPO, and record the trained policy:
+Then, in the Isaac Lab environment:
 
 ```bash
-uv sync --extra video
+uv sync --extra ov --extra video
+# Optional: render new start images (the task includes a set). OvPhysX poses the arm and OVRTX renders the camera.
 uv run python scripts/tools/cosmos/render_franka_reset_records.py
-uv run python scripts/tools/cosmos/cosmos3_franka_rollout.py --output outputs/cosmos3/franka_sweep
-uv run isaaclab train --rl_library rsl_rl --task Isaac-Cosmos3-Franka-Reach-v0 --max_iterations 10
-uv run python scripts/tools/cosmos/cosmos3_franka_rollout.py --output outputs/cosmos3/franka_policy     --checkpoint logs/rsl_rl/cosmos3_franka_reach/<run>/model_9.pt
+# Train with PPO and record the task's camera.
+uv run isaaclab train --rl_library rsl_rl --task Isaac-Cosmos3-Franka-Reach-v0 --max_iterations 10 \
+    --video sensor:camera --video_length 256
+# Run the trained policy (the latest checkpoint of the experiment) and record it.
+uv run isaaclab play --rl_library rsl_rl --task Isaac-Cosmos3-Franka-Reach-v0 \
+    --video sensor:camera --video_length 256
 ```
 
-The video starts each episode with its RTX start image, followed by the generated frames. The model was trained on
-other arms (AgiBot, YAM, BEHAVIOR-1K) and not on a Franka, so expect the arm's appearance and its response to the
-controls to drift; the task demonstrates the workflow, not a policy that transfers.
+* `--rl_library rsl_rl` selects the task's `rsl_rl` PPO configuration: a CNN on the generated image plus the joint
+  positions, two chunks (32 steps) per rollout.
+* `--video sensor:camera` records the task's camera, which is the image the policy sees. No viewer is started. The
+  camera shows the last frame of each generated chunk until the next chunk arrives (all 16 frames are in its frame
+  history), so the video changes once per chunk. `--video_length 256` is 16 chunks, two episodes, so the video passes
+  a reset to a new start image.
+* A service on another endpoint is selected with the override `env.sim.physics.model.endpoint=unix:///path` or
+  `env.sim.physics.model.endpoint=tcp://host:port`.
+
+**What needs fine-tuning, and when.** Sim-Bimanual was trained on the wrist poses and grippers of AgiBot, YAM and
+BEHAVIOR-1K arms, not on a Franka. Franka controls sent through the YAM right-wrist slot give plausible frames that
+do not follow the robot faithfully: the arm can change appearance, and its motion follows the controls only roughly.
+For a policy whose image matters:
+
+* **The model:** post-train Cosmos3 on videos and actions of the target robot, in the same `unified_v1` layout (see
+  the Framework's Sim-Bimanual post-training guide), and point `--checkpoint` at the result. Isaac Lab does not change;
+  set `Cosmos3Cfg.domain_name` to the domain of the new data and keep the joint mapping consistent with how that data
+  was encoded.
+* **The reward and terminations:** here they read the joint state, so they stay exact. A reward or termination judged
+  from images, such as a classifier, must be trained or tuned on generated frames.
+
+The rest of the task and the training run stay as they are.
+
+**What to expect.** On an RTX PRO 6000, the first chunk takes about 14 s (the service opens its session) and each
+later chunk of 16 frames about 1 s. A short PPO run shows that the loop runs (start images, generated chunks, resets,
+updates); it does not produce a useful policy.
 
 ## Tests
 
