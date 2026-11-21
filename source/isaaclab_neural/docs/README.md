@@ -4,7 +4,7 @@
 and cameras; the world model supplies the joint state and the camera frames through the same interfaces.
 
 ```text
-Policy / trainer  ->  Task  ->  Isaac Lab  ->  WorldModelManager  ->  WorldModel
+Policy / trainer  ->  Task  ->  Isaac Lab  ->  NeuralManager  ->  WorldModel
 ```
 
 The world model only generates images. The manager keeps each environment's joint state itself (the reset record's
@@ -14,10 +14,10 @@ state at reset, then the last joint target), so joint observations and actions b
 
 | Component | Role |
 | --- | --- |
-| `WorldModelCfg` | `PhysicsCfg` selected as the task's `physics=` preset. Holds the model configuration and the reset records. |
-| `WorldModelManager` | Physics backend (`backend_name = "neural"`). Buffers one joint target per step, calls the model once per chunk, and keeps the predicted frames of each view. |
-| `WorldModel` | Abstract model: `spec()`, `reset()`, `step()`, `close()`. |
-| `WorldModelRendererCfg` | Selected as a camera's `renderer_cfg`, with the model view the camera shows. Copies that view's frames into the camera, including its frame history. |
+| `NeuralCfg` | `PhysicsCfg` selected as the task's `physics=` preset. Holds the model configuration and the reset records. |
+| `NeuralManager` | Physics backend (`backend_name = "neural"`). Buffers one joint target per step, calls the model once per chunk, and keeps the predicted frames of each view. |
+| `WorldModel` | Abstract model: `spec()`, `reset()`, `write()`, `step()`, `close()`. |
+| `NeuralRendererCfg` | Selected as a camera's `renderer_cfg`, with the model view the camera shows. Copies that view's frames into the camera, including its frame history. |
 | `Articulation` | Virtual articulation. Shares the manager's joint state and targets, so the task's joint observation and action terms work unchanged. Its reset starts an episode from a reset record. Everything that needs a body raises. |
 | `at_chunk_boundary` | Makes a termination function fire only where environments can reset. |
 | `Cosmos3Cfg`, `Cosmos3Model` | Client of the Cosmos3 world-model service (`isaaclab_neural.models.cosmos3`). |
@@ -25,12 +25,15 @@ state at reset, then the last joint target), so joint observations and actions b
 ## Using a task's configuration
 
 The task declares an `ArticulationCfg` and a `CameraCfg` as it would for a physics backend, and selects the world
-model with `WorldModelCfg(model=..., reset_manifest=...)` and `WorldModelRendererCfg()`. The camera needs
+model with `NeuralCfg(model_cfg=..., reset_manifest=...)` and `NeuralRendererCfg()`. The camera needs
 `frame_history_length` equal to the model's chunk length and the model's image size.
 
 * **Views**: a model predicts one or more named camera views (`WorldModelSpec.views`). Each world-model camera shows
-  one of them, set with `WorldModelRendererCfg(view=...)`; for a model with one view, `view` can stay `None`. Several
+  one of them, set with `NeuralRendererCfg(view=...)`; for a model with one view, `view` can stay `None`. Several
   cameras of a multi-view model each select their own view.
+* **Outputs**: a model predicts one or more camera outputs per view (`WorldModelSpec.outputs`, default `("rgb",)`),
+  named as camera data types. A camera requests them in `data_types`, and `NeuralRendererCfg.outputs` declares their
+  layout, RGB by default; for depth, for example, add `RenderBufferKind.DEPTH: RenderBufferSpec(1, wp.float32)`.
 * **Joints and limits** come from the spawned USD asset (a URDF spawner converts to USD): the movable joints in
   traversal order, or in the order of `ArticulationCfg.joint_ordering`, which must match the reset records. Joint
   limits are read from the USD, and `soft_joint_pos_limit_factor` applies as usual.
@@ -38,7 +41,8 @@ model with `WorldModelCfg(model=..., reset_manifest=...)` and `WorldModelRendere
   Velocity and effort targets, poses, forces and physical properties raise `NotImplementedError`.
 * **Resets**: `Articulation.reset`, which the scene calls before the reset events, samples a reset record (`image`,
   `state`, `prompt`, `split` in the JSON manifest) and starts the episode from it: the record's start image becomes the
-  camera's frames (`image` is a path, or `{view: path}` for a model with several views), and its joint state the joint
+  camera's frames (`image` is a path, `{view: path}`, or `{view: {output: path}}` with `.npy` arrays for outputs other
+  than RGB), and its joint state the joint
   state and the default joint position. The model restarts the environment from the record's image and prompt at the end
   of the next chunk, before it predicts that chunk. The standard `reset_joints_by_offset` and `reset_joints_by_scale`
   events therefore start from the record; a non-zero range moves the joints away from the start image the model sees, so
@@ -78,13 +82,15 @@ Implement the `WorldModel` interface, subclass `ModelCfg` and set its `class_typ
 
 | Method | Responsibility |
 | --- | --- |
-| `spec()` | Chunk length, frame rate, image size, the largest number of environments and the names of the views. |
-| `reset(env_ids, images, prompts, seeds)` | Restart the selected environments (host lists) from their start images, `{view: (K, H, W, 3)}`. Called right before `step()`, for the environments that reset since the last chunk. |
-| `step(joint_targets, start_joint_state)` | Joint targets `(N, T, J)` and the state before the chunk `(N, J)` to frames `{view: (N, T, H, W, 3)}`. |
+| `spec()` | Chunk length, frame rate, image size, the largest number of environments, the inputs it needs, and the names of the views and outputs. |
+| `reset(env_ids, images, prompts, seeds)` | Restart the selected environments (host lists) from their start frames, `{view: {output: (K, H, W, C)}}`. Called right before `step()`, for the environments that reset since the last chunk. |
+| `write(name, value)` | Set one of the inputs the spec lists, named by `WorldModelAttribute`: the chunk's joint targets `(N, T, J)` (`JOINT_TARGETS`) or the joint state before the chunk `(N, J)` (`START_JOINT_STATE`). Called before every `step()`. |
+| `step()` | Predict the next chunk from the inputs written, as frames `{view: {output: (N, T, H, W, C)}}`. |
 | `close()` | Release resources. |
 
-Frames are `uint8` torch tensors on the device, and joint targets arrive there. The targets buffer is reused for the
-next chunk, so a model that keeps it copies it. Construction is cheap; load the weights on the first call.
+Frames and inputs are torch tensors on the device. Each written input is the manager's buffer, reused for the next
+chunk, so a model that keeps it copies it. A new input needs the backend to provide it as a `WorldModelAttribute`; the
+manager rejects a model whose spec needs one it does not provide. Construction is cheap; load the weights on the first call.
 
 ## Cosmos3
 
@@ -106,7 +112,7 @@ uv run --no-sync isaaclab-cosmos-world-model-server --checkpoint "$COSMOS3_CHECK
 ```
 
 Wait for `Cosmos ready at ...`, then run the task in the Isaac Lab environment. A task selects the model with
-`WorldModelCfg(model=Cosmos3Cfg(joint_mapping=...))`. `Cosmos3Model.step` converts joint targets to 59 normalized
+`NeuralCfg(model_cfg=Cosmos3Cfg(joint_mapping=...))`. `Cosmos3Model.step` converts joint targets to 59 normalized
 controls with the task's `JointMappingCfg`, so the robot description and the normalization stay with the task.
 
 The service's `--mode window` (default) serves any number of environments, one after the other; `--mode session`

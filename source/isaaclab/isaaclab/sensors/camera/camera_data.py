@@ -11,7 +11,7 @@ import warp as wp
 
 # Re-exported as part of the public isaaclab.sensors.camera API
 from ...renderers.output_contract import RenderBufferKind, RenderBufferSpec
-from ...utils.leapp import leapp_tensor_semantics
+from ...utils.leapp import QUAT_XYZW_COMPONENT_AXIS, XYZ_COMPONENT_AXIS, Axis, AxisKind, Kind, leapp_tensor_semantics
 from ...utils.warp import ProxyArray
 from ...utils.warp.warp_math import convert_camera_frame_orientation_convention_wp
 
@@ -37,7 +37,7 @@ class CameraData:
         # Output image buffers — allocated in allocate()
         self._output: dict[str, ProxyArray] | None = None
 
-        self._frame_history: ProxyArray | None = None
+        self._frame_history: dict[str, ProxyArray] | None = None
         self._frame_history_mask: ProxyArray | None = None
 
         self.image_shape: tuple[int, int] | None = None
@@ -58,7 +58,7 @@ class CameraData:
     ##
 
     @property
-    @leapp_tensor_semantics(kind="state/body/position")
+    @leapp_tensor_semantics(kind=Kind.FRAME_POSITION, axes=[Axis(AxisKind.SYSTEM), XYZ_COMPONENT_AXIS])
     def pos_w(self) -> ProxyArray:
         """Position of the sensor origin in world frame [m], following ROS convention.
 
@@ -69,7 +69,7 @@ class CameraData:
         return self._pos_w
 
     @property
-    @leapp_tensor_semantics(kind="state/body/rotation")
+    @leapp_tensor_semantics(kind=Kind.FRAME_ORIENTATION, axes=[Axis(AxisKind.SYSTEM), QUAT_XYZW_COMPONENT_AXIS])
     def quat_w_world(self) -> ProxyArray:
         """Quaternion orientation ``(x, y, z, w)`` of the sensor origin in world frame,
         following the world coordinate frame convention.
@@ -99,12 +99,12 @@ class CameraData:
         return self._intrinsic_matrices
 
     @property
-    def frame_history(self) -> ProxyArray | None:
-        """The most recent RGB captures, oldest first, or ``None`` if the history is disabled.
+    def frame_history(self) -> dict[str, ProxyArray] | None:
+        """The most recent captures of each output in :attr:`~isaaclab.sensors.camera.CameraCfg.data_types`, oldest
+        first, keyed like :attr:`output`, or ``None`` if the history is disabled.
 
-        Shape is ``(N, T, H, W)`` with dtype ``wp.vec3ub``, which resolves to ``(N, T, H, W, 3)`` in torch,
-        where ``T`` is
-        :attr:`~isaaclab.sensors.camera.CameraCfg.frame_history_length`. The last entry equals the ``"rgb"`` output.
+        Each entry has shape ``(N, T, H, W, C)`` and the dtype of its output, where ``T`` is
+        :attr:`~isaaclab.sensors.camera.CameraCfg.frame_history_length`. Its last frame equals the output.
         """
         return self._frame_history
 
@@ -117,7 +117,7 @@ class CameraData:
         return self._frame_history_mask
 
     @property
-    @leapp_tensor_semantics(kind="state/camera/image")
+    @leapp_tensor_semantics(kind=Kind.IMAGE)
     def output(self) -> dict[str, ProxyArray] | None:
         """The retrieved sensor data with sensor types as key.
 
@@ -180,7 +180,8 @@ class CameraData:
             supported_specs: Per-buffer layout the active renderer can produce,
                 keyed by :class:`RenderBufferKind`. Names absent from this mapping
                 are not allocated.
-            history_length: Number of RGB frames to keep in :attr:`frame_history`. ``0`` disables it.
+            history_length: Number of frames of each requested output to keep in :attr:`frame_history`. ``0``
+                disables it.
 
         Returns:
             A new :class:`CameraData` with :attr:`image_shape`, :attr:`output`,
@@ -234,9 +235,14 @@ class CameraData:
         obj._output = buffers
         obj.info = {name: None for name in buffers}
         if history_length > 0:
-            obj._frame_history = ProxyArray(
-                wp.zeros((num_views, history_length, height, width), dtype=wp.vec3ub, device=device)
-            )
+            obj._frame_history = {}
+            for name in dict.fromkeys(data_types):
+                if name in buffers:
+                    # Warp arrays have at most four dimensions, so each pixel's channels form one vector element.
+                    channels = buffers[name].warp.shape[-1]
+                    pixel = wp.types.vector(length=channels, dtype=buffers[name].warp.dtype)
+                    shape = (num_views, history_length, height, width)
+                    obj._frame_history[name] = ProxyArray(wp.zeros(shape, dtype=pixel, device=device))
             obj._frame_history_mask = ProxyArray(wp.zeros(num_views, dtype=wp.bool, device=device))
         return obj
 
@@ -245,7 +251,7 @@ class CameraData:
     ##
 
     @property
-    @leapp_tensor_semantics(kind="state/body/rotation")
+    @leapp_tensor_semantics(kind=Kind.FRAME_ORIENTATION, axes=[Axis(AxisKind.SYSTEM), QUAT_XYZW_COMPONENT_AXIS])
     def quat_w_ros(self) -> ProxyArray:
         """Quaternion orientation ``(x, y, z, w)`` of the sensor origin in the world frame, following ROS convention.
 
@@ -260,7 +266,7 @@ class CameraData:
         return self._quat_w_ros
 
     @property
-    @leapp_tensor_semantics(kind="state/body/rotation")
+    @leapp_tensor_semantics(kind=Kind.FRAME_ORIENTATION, axes=[Axis(AxisKind.SYSTEM), QUAT_XYZW_COMPONENT_AXIS])
     def quat_w_opengl(self) -> ProxyArray:
         """Quaternion orientation ``(x, y, z, w)`` of the sensor origin in the world frame, following
         Opengl / USD Camera convention.

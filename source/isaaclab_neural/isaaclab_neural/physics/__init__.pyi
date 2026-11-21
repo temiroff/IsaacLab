@@ -4,12 +4,9 @@
 # SPDX-License-Identifier: BSD-3-Clause
 
 __all__ = [
-    "FrameBuffer",
-    "FrameReader",
-    "WorldModelCfg",
-    "WorldModelManager",
+    "NeuralCfg",
+    "NeuralManager",
 ]
 
-from .frame_buffer import FrameBuffer, FrameReader
-from .world_model_manager import WorldModelManager
-from .world_model_manager_cfg import WorldModelCfg
+from .neural_manager import NeuralManager
+from .neural_manager_cfg import NeuralCfg

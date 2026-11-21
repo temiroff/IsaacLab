@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import logging
 import sys
+import warnings
 from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any, Literal, cast
 
@@ -29,8 +30,9 @@ from ...utils.math import (
 from ...utils.warp import ProxyArray
 from ...utils.warp.memory import resolve_1d_indices, resolve_ids
 from ..sensor_base import SensorBase
-from .camera_cfg import _render_data_types
+from .camera_cfg import ExposureCfg, _render_data_types
 from .camera_data import CameraData, RenderBufferKind
+from .camera_exposure import apply_neutral_exposure
 
 if TYPE_CHECKING:
     from ...utils.tensor_processors import TensorProcessor
@@ -259,14 +261,43 @@ class Camera(SensorBase):
             if not sim_utils.find_matching_prims(spawn_target):
                 raise RuntimeError(f"Could not find prim with path {spawn_target!r}.")
 
-        # Complete camera authoring before cloning or importing the scene into a native backend.
         if self.cfg.isp_cfg is not None:
-            from isaaclab_ppisp import apply_rtx_exposure_overrides, resolve_and_normalize
+            from isaaclab_ppisp import PpispProcessorCfg, resolve_and_normalize
 
+            msg = (
+                "CameraCfg.isp_cfg is deprecated and will be removed in a future release. Add"
+                " isaaclab_ppisp.PpispProcessorCfg to tensor_processors instead."
+            )
+            warnings.warn(msg, FutureWarning, stacklevel=2)
+            if any(isinstance(cfg, PpispProcessorCfg) for cfg in self.cfg.tensor_processors):
+                raise ValueError(
+                    "CameraCfg.isp_cfg and a PpispProcessorCfg in tensor_processors both configure PPISP, which"
+                    " would run twice. Remove isp_cfg."
+                )
+            # PPISP applies its own exposure, so where it applies, the renderers that apply the camera's exposure
+            # (Isaac RTX and OVRTX) get neutral exposure.
+            first_prim = sim_utils.find_first_matching_prim(self.cfg.prim_path, self.stage)
+            first_path = str(first_prim.GetPath()) if first_prim else None
+            isp_cfg = resolve_and_normalize(self.cfg.isp_cfg, self.stage, first_path)
+            if isp_cfg is not None:
+                self.cfg.tensor_processors = [PpispProcessorCfg(isp_cfg=isp_cfg), *self.cfg.tensor_processors]
+                if self.cfg.renderer_cfg.renderer_type in ("isaac_rtx", "ovrtx"):
+                    self.cfg.exposure = ExposureCfg(mode="neutral")
+            # The processor now owns the value, so a camera built from this cfg does not forward it again.
+            self.cfg.isp_cfg = None
+        # Complete camera authoring before cloning or importing the scene into a native backend.
+        if self.cfg.exposure.mode == "neutral" or self.cfg.tensor_processors:
             camera_paths = [str(p.GetPath()) for p in sim_utils.find_matching_prims(self.cfg.prim_path, self.stage)]
-            self.cfg.isp_cfg = resolve_and_normalize(self.cfg.isp_cfg, self.stage, camera_paths[0])
-            if self.cfg.isp_cfg is not None and self.cfg.renderer_cfg.renderer_type in ("isaac_rtx", "ovrtx"):
-                apply_rtx_exposure_overrides(self.stage, camera_paths)
+        if self.cfg.exposure.mode == "neutral":
+            apply_neutral_exposure(self.stage, camera_paths)
+        if self.cfg.tensor_processors:
+            prepared = [
+                cfg.func.prepare_camera(cfg, self.stage, camera_paths, self.cfg.renderer_cfg)
+                if hasattr(cfg.func, "prepare_camera")
+                else cfg
+                for cfg in self.cfg.tensor_processors
+            ]
+            self.cfg.tensor_processors = [cfg for cfg in prepared if cfg is not None]
         self._render_data_types = _render_data_types(self.cfg)
 
         # Every renderer backend draws the visual-only geometry, so it must survive cloning even
@@ -830,7 +861,7 @@ class Camera(SensorBase):
     """
 
     def _push_frame_history(self, env_mask: wp.array) -> None:
-        """Append the latest RGB capture of the updated environments to the frame history.
+        """Append the latest capture of each output of the updated environments to the frame history.
 
         Renderers whose configuration sets ``provides_frame_history`` fill the whole history themselves and are
         skipped.
@@ -843,18 +874,20 @@ class Camera(SensorBase):
             updated = self._history_all
         else:
             updated = wp.to_torch(env_mask).bool()
-        selected = updated[:, None, None, None]
-        frames = self._data.frame_history.torch
-        capture = wp.to_torch(self._data.output["rgb"].warp)
-        # Shift the updated environments one frame towards the oldest, in place and without reading the mask on the
-        # host: each slot takes the next one's frame, then the newest slot takes the capture.
-        for t in range(frames.shape[1] - 1):
-            torch.where(selected, frames[:, t + 1], frames[:, t], out=frames[:, t])
-        torch.where(selected, capture, frames[:, -1], out=frames[:, -1])
         # The first capture of an environment, and its first after a reset, fills every slot, so the history never
         # holds frames of an ended episode.
         torch.logical_and(self._history_restart, updated, out=self._history_fill)
-        torch.where(self._history_fill[:, None, None, None, None], capture[:, None], frames, out=frames)
+        for name, history in self._data.frame_history.items():
+            frames = history.torch
+            capture = wp.to_torch(self._data.output[name].warp)
+            selected = updated.view(-1, *[1] * (capture.dim() - 1))
+            # Shift the updated environments one frame towards the oldest, in place and without reading the mask on
+            # the host: each slot takes the next one's frame, then the newest slot takes the capture.
+            for t in range(frames.shape[1] - 1):
+                torch.where(selected, frames[:, t + 1], frames[:, t], out=frames[:, t])
+            torch.where(selected, capture, frames[:, -1], out=frames[:, -1])
+            fill = self._history_fill.view(-1, *[1] * (frames.dim() - 1))
+            torch.where(fill, capture[:, None], frames, out=frames)
         self._history_restart.masked_fill_(updated, False)
         wp.to_torch(self._data.frame_history_mask.warp).copy_(updated)
 
@@ -862,11 +895,10 @@ class Camera(SensorBase):
         """Allocate the masks of the default history push; they stay ``None`` when the history is off or the renderer
         fills it."""
         self._history_restart = self._history_fill = self._history_all = None
-        history = self._data.frame_history
-        if history is None or getattr(self.cfg.renderer_cfg, "provides_frame_history", False):
+        mask = self._data.frame_history_mask
+        if mask is None or getattr(self.cfg.renderer_cfg, "provides_frame_history", False):
             return
-        num_views = history.torch.shape[0]
-        self._history_restart = torch.ones(num_views, dtype=torch.bool, device=history.torch.device)
+        self._history_restart = torch.ones_like(mask.torch, dtype=torch.bool)
         self._history_fill = torch.zeros_like(self._history_restart)
         self._history_all = torch.ones_like(self._history_restart)
 
