@@ -23,8 +23,8 @@ CNN_CFG = RslRlCNNModelCfg.CNNCfg(
 class FrankaReachPPORunnerCfg(RslRlOnPolicyRunnerCfg):
     """Actor and critic both see the image and the joint positions."""
 
-    # Two model chunks of 16 frames per rollout, so a rollout never stops inside a chunk.
-    num_steps_per_env = 32
+    # One episode of 8 chunks per rollout.
+    num_steps_per_env = 8
     # Episodes start at step 0, so their time-outs fall on chunk boundaries, where the world model can reset.
     init_at_random_ep_len = False
     max_iterations = 1000

@@ -31,7 +31,7 @@ READY = [0.0, -0.569, 0.0, -2.810, 0.0, 3.037, 0.741, 0.04, 0.04]
 
 
 class CountingModel(WorldModel):
-    chunks = 0
+    chunks = []
 
     def __init__(self, cfg, num_envs, device):
         self.num_envs, self.device = num_envs, device
@@ -43,10 +43,10 @@ class CountingModel(WorldModel):
         pass
 
     def write(self, name, value):
-        pass
+        if name == "joint_targets":
+            CountingModel.chunks.append(value.clone())
 
     def step(self):
-        CountingModel.chunks += 1
         return {"camera": {"rgb": torch.zeros(self.num_envs, CHUNK, H, W, 3, dtype=torch.uint8, device=self.device)}}
 
     def close(self):
@@ -74,7 +74,7 @@ def env(tmp_path):
     manifest = tmp_path / "resets.json"
     manifest.write_text(json.dumps([{"image": "start.png", "state": READY, "prompt": "reach", "split": "train"}]))
 
-    CountingModel.chunks = 0
+    CountingModel.chunks = []
     cfg = resolve_presets(FrankaReachEnvCfg())
     cfg.scene.robot.spawn = sim_utils.UsdFileCfg(usd_path=str(tmp_path / "franka.usda"))
     cfg.scene.camera.height, cfg.scene.camera.width = H, W
@@ -86,17 +86,18 @@ def env(tmp_path):
     env.close()
 
 
-def test_the_reach_reward_follows_the_hand_through_forward_kinematics(env):
+def test_one_step_moves_the_arm_over_a_chunk_and_rewards_the_hand_through_forward_kinematics(env):
     obs, _ = env.reset()
     assert obs["image"].shape == (1, 3, H, W) and obs["policy"].shape == (1, 9)
     action = torch.tensor([[0.4, -0.2, 0.1, 0.3, 0.0, -0.1, 0.2]])
     _, reward, *_ = env.step(action)
-    # The arm moved to half the action away from the record's pose, the fingers stayed.
-    joint_pos = torch.tensor(READY) + 0.5 * torch.cat((action[0], torch.zeros(2)))
+    # The model ran once, on targets that reach half the action away from the record's pose in equal increments.
+    (targets,) = CountingModel.chunks
+    delta = 0.5 * torch.cat((action[0], torch.zeros(2)))
+    fractions = torch.arange(1, CHUNK + 1) / CHUNK
+    assert torch.allclose(targets[0], torch.tensor(READY) + fractions[:, None] * delta)
+    joint_pos = torch.tensor(READY) + delta
     assert torch.allclose(env.scene["robot"].data.joint_pos.torch[0], joint_pos)
     distance = torch.linalg.norm(tcp_position(joint_pos) - torch.tensor(GOAL))
     expected = -0.2 * distance + 0.1 * (1 - torch.tanh(distance / 0.1)) - 1e-4 * action.square().sum()
-    assert reward[0].item() == pytest.approx(expected.item() / FPS, rel=1e-4)
-    for _ in range(CHUNK - 1):
-        env.step(action)
-    assert CountingModel.chunks == 1
+    assert reward[0].item() == pytest.approx(expected.item() * CHUNK / FPS, rel=1e-4)

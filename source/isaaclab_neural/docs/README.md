@@ -56,9 +56,14 @@ model with `NeuralCfg(model_cfg=..., reset_manifest=...)` and `NeuralRendererCfg
 
 ## Timing
 
-A model predicts `chunk_length` frames from `chunk_length` joint targets. Use `sim.dt = 1 / fps` and `decimation = 1`:
-one environment step is one frame, and the model runs on the last step of a chunk. The frames of a chunk arrive
-together, so a reward on them is paid in the step that completes the chunk.
+A model predicts `chunk_length` frames from `chunk_length` joint targets. Use `sim.dt = 1 / fps` and either:
+
+* `decimation = 1`: one environment step is one frame, and the model runs on the last step of a chunk. The frames of
+  a chunk arrive together, so a reward on them is paid in the step that completes the chunk.
+* `decimation = chunk_length` with `JointPositionActionCfg(chunk_length=chunk_length)`: one environment step is
+  one chunk, so the policy acts once per chunk and sees each new chunk. With `interpolate=True` the policy sets one
+  target per joint and the arm reaches it in equal increments over the chunk; otherwise it sets every target of the
+  chunk.
 
 Isaac Lab resets an environment in any step in which a termination fires, but the model can only restart between
 chunks, so a reset in the middle of a chunk raises when the chunk ends.
@@ -137,6 +142,7 @@ from the joints are exact; only the image is generated.
 | Piece | In the example | What it does |
 | --- | --- | --- |
 | World model | `Cosmos3Cfg(domain_name="xdof_yam")` in `NeuralCfg(model_cfg=...)` | The model, here the Cosmos3 service. Any `WorldModel` fits (see "Add a world model"). |
+| Actions | `JointPositionActionCfg(chunk_length=16, interpolate=True)` | One environment step is one chunk: the policy sets the 7 arm joint targets once per chunk, and the arm reaches them in 16 equal increments. `env.actions.arm.interpolate=false` lets the policy set all 16 targets (112 numbers). |
 | Joint mapping | `FrankaJointMappingCfg` | Converts a chunk of joint targets into the model's action space. Here: forward kinematics to hand poses relative to the chunk's start pose, plus finger width, as the right wrist of the checkpoint's `xdof_yam` domain, normalized with the statistics the checkpoint ships. |
 | Reset records | `assets/resets.json` and its PNGs | Start image, joint state and prompt of each episode start. `render_franka_reset_records.py` renders them with OvPhysX and OVRTX, without Kit. |
 | Camera | `CameraCfg(renderer_cfg=NeuralRendererCfg(), frame_history_length=16)` | Shows the generated frames; placed where the start images were rendered from, at the model's 480 x 640. |
@@ -163,18 +169,18 @@ uv sync --extra ov --extra rsl-rl --extra video
 uv run python scripts/tools/cosmos/render_franka_reset_records.py
 # Train with PPO and record the task's camera.
 uv run isaaclab train --rl_library rsl_rl --task Isaac-Cosmos3-Franka-Reach-v0 --max_iterations 10 \
-    --video sensor:camera --video_length 256
+    --video sensor:camera --video_length 16
 # Run the trained policy (the latest checkpoint of the experiment) and record it.
 uv run isaaclab play --rl_library rsl_rl --task Isaac-Cosmos3-Franka-Reach-v0 \
-    --video sensor:camera --video_length 256
+    --video sensor:camera --video_length 16
 ```
 
 * `--rl_library rsl_rl` selects the task's `rsl_rl` PPO configuration: a CNN on the generated image plus the joint
-  positions, two chunks (32 steps) per rollout.
+  positions, one episode (8 steps of one chunk each) per rollout.
 * `--video sensor:camera` records the task's camera, which is the image the policy sees. No viewer is started. The
-  camera shows the last frame of each generated chunk until the next chunk arrives (all 16 frames are in its frame
-  history), so the video changes once per chunk. `--video_length 256` is 16 chunks, two episodes, so the video passes
-  a reset to a new start image.
+  camera shows the last frame of each generated chunk (all 16 frames are in its frame history), so the video has
+  one frame per step, per chunk. `--video_length 16` is 16 chunks, two episodes, so the video passes a reset to a new
+  start image.
 * A service on another endpoint is selected with the override `env.sim.physics.model_cfg.endpoint=unix:///path` or
   `env.sim.physics.model_cfg.endpoint=tcp://host:port`.
 

@@ -6,8 +6,9 @@
 """Franka reach, with the public Cosmos3 Sim-Bimanual checkpoint imagining the camera view instead of physics.
 
 The task is written like any manager-based task: a Franka arm, a camera, joint-position actions, joint and image
-observations and a reach reward. The reward follows the hand from the joint state with forward kinematics, so it does
-not depend on the generated frames. The ``physics=`` preset selects the world-model backend; no physics engine runs.
+observations and a reach reward. One environment step is one chunk: the policy acts once per chunk of frames. The
+reward follows the hand from the joint state with forward kinematics, so it does not depend on the generated frames.
+The ``physics=`` preset selects the world-model backend; no physics engine runs.
 Its reset records are start images that Isaac Lab rendered with OvPhysX and OVRTX, without Kit
 (``scripts/tools/cosmos/render_franka_reset_records.py``).
 """
@@ -112,9 +113,20 @@ class FrankaReachSceneCfg(InteractiveSceneCfg):
 
 @configclass
 class ActionsCfg:
-    """Arm joint-position targets around the reset record's pose, as in the Franka reach task."""
+    """Arm joint-position targets around the reset record's pose, as in the Franka reach task, over one chunk.
 
-    arm = JointPositionActionCfg(asset_name="robot", joint_names=["panda_joint.*"], scale=0.5, use_default_offset=True)
+    The policy sets one target per joint, which the arm reaches in equal increments over the chunk's frames. With
+    ``interpolate=False`` it sets all 16 targets of the chunk instead.
+    """
+
+    arm = JointPositionActionCfg(
+        asset_name="robot",
+        joint_names=["panda_joint.*"],
+        scale=0.5,
+        use_default_offset=True,
+        chunk_length=CHUNK,
+        interpolate=True,
+    )
 
 
 @configclass
@@ -176,9 +188,10 @@ class FrankaReachEnvCfg(ManagerBasedRLEnvCfg):
     terminations: TerminationsCfg = TerminationsCfg()
 
     def __post_init__(self) -> None:
-        # One environment step is one frame and one joint target; the model runs once per chunk of frames.
-        self.decimation = 1
+        # One environment step is one chunk: a frame and a joint target per physics step, then the model runs once.
+        self.decimation = CHUNK
         self.sim.dt = 1.0 / FPS
-        # 8 chunks, so episodes end on chunk boundaries where the world model can be reset.
+        self.sim.render_interval = self.decimation
+        # 8 chunks. Every step ends on a chunk boundary, where the world model can be reset.
         self.episode_length_s = 8 * CHUNK / FPS
         self.sim.physics = FrankaReachPhysicsCfg()

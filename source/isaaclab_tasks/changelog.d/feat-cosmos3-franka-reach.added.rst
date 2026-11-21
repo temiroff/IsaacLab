@@ -2,4 +2,5 @@
   Sim-Bimanual checkpoint through the world model of ``isaaclab_neural``, without Isaac Sim or Kit. Its start images
   are rendered with OvPhysX and OVRTX. Its joint mapping encodes the hand's forward kinematics as the right wrist of
   the ``xdof_yam`` action domain, its reach reward reads the same forward kinematics from the joint state, and it
-  includes an ``rsl_rl`` PPO configuration with a CNN image encoder.
+  includes an ``rsl_rl`` PPO configuration with a CNN image encoder. Its policy acts once per chunk of 16 frames
+  through the ``chunk_length`` of ``JointPositionActionCfg``.
