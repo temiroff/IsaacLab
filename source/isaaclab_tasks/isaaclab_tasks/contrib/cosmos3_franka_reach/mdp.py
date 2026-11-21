@@ -3,20 +3,36 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
-"""Reward of the world-model Franka reach task, from the joint state alone."""
+"""Action and reward of the world-model Franka reach task, from the joint state alone."""
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import TYPE_CHECKING
 
 import torch
 
+from isaaclab.envs.mdp import JointPositionAction
 from isaaclab.managers import ManagerTermBase, RewardTermCfg, SceneEntityCfg
 
 from .franka_mapping import tcp_position
 
 if TYPE_CHECKING:
     from isaaclab.envs import ManagerBasedRLEnv
+
+
+class ResetPoseJointPositionAction(JointPositionAction):
+    """Joint-position targets around the joint positions the episode started from.
+
+    :class:`~isaaclab.envs.mdp.JointPositionAction` copies the default joint positions once, when it is built. The
+    world-model articulation makes each reset record's state the default joint position when it resets, before the
+    action terms reset, so this term copies them again then.
+    """
+
+    def reset(self, env_ids: Sequence[int] | None = None) -> None:
+        super().reset(env_ids)
+        ids = slice(None) if env_ids is None else env_ids
+        self._offset[ids] = self._asset.data.default_joint_pos.torch[ids][:, self._joint_ids]
 
 
 class TcpGoalDistance(ManagerTermBase):

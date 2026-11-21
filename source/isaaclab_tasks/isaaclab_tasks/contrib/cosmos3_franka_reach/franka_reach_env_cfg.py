@@ -40,7 +40,7 @@ from isaaclab_tasks.utils import PresetCfg
 from isaaclab_assets import FRANKA_PANDA_CFG
 
 from .franka_mapping import FRANKA_JOINT_NAMES, FrankaJointMappingCfg
-from .mdp import TcpGoalDistance
+from .mdp import ResetPoseJointPositionAction, TcpGoalDistance
 
 ASSETS = Path(__file__).with_name("assets")
 CHECKPOINT = ".pretrained_checkpoints/Cosmos3-Nano-Sim-Bimanual"
@@ -120,6 +120,7 @@ class ActionsCfg:
     """
 
     arm = JointPositionActionCfg(
+        class_type=ResetPoseJointPositionAction,
         asset_name="robot",
         joint_names=["panda_joint.*"],
         scale=0.5,

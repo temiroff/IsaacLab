@@ -142,7 +142,7 @@ from the joints are exact; only the image is generated.
 | Piece | In the example | What it does |
 | --- | --- | --- |
 | World model | `Cosmos3Cfg(domain_name="xdof_yam")` in `NeuralCfg(model_cfg=...)` | The model, here the Cosmos3 service. Any `WorldModel` fits (see "Add a world model"). |
-| Actions | `JointPositionActionCfg(chunk_length=16, interpolate=True)` | One environment step is one chunk: the policy sets the 7 arm joint targets once per chunk, and the arm reaches them in 16 equal increments. `env.actions.arm.interpolate=false` lets the policy set all 16 targets (112 numbers). |
+| Actions | `JointPositionActionCfg(chunk_length=16, interpolate=True)` | One environment step is one chunk: the policy sets the 7 arm joint targets once per chunk, around the reset record's pose, and the arm reaches them in 16 equal increments. The task's `ResetPoseJointPositionAction` reads that pose again at every reset; `JointPositionAction` would keep the Franka's initial pose. `env.actions.arm.interpolate=false` lets the policy set all 16 targets (112 numbers). |
 | Joint mapping | `FrankaJointMappingCfg` | Converts a chunk of joint targets into the model's action space. Here: forward kinematics to hand poses relative to the chunk's start pose, plus finger width, as the right wrist of the checkpoint's `xdof_yam` domain, normalized with the statistics the checkpoint ships. |
 | Reset records | `assets/resets.json` and its PNGs | Start image, joint state and prompt of each episode start. `render_franka_reset_records.py` renders them with OvPhysX and OVRTX, without Kit. |
 | Camera | `CameraCfg(renderer_cfg=NeuralRendererCfg(), frame_history_length=16)` | Shows the generated frames; placed where the start images were rendered from, at the model's 480 x 640. |

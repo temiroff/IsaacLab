@@ -27,7 +27,8 @@ from isaaclab_tasks.contrib.cosmos3_franka_reach.franka_reach_env_cfg import CHU
 from isaaclab_tasks.utils.hydra import resolve_presets
 
 H, W = 24, 32
-READY = [0.0, -0.569, 0.0, -2.810, 0.0, 3.037, 0.741, 0.04, 0.04]
+START = [0.3, -0.7, -0.2, -2.6, 0.25, 3.1, 0.6, 0.04, 0.04]
+"""The reset record's joint positions, away from the Franka's initial ones."""
 
 
 class CountingModel(WorldModel):
@@ -72,7 +73,7 @@ def env(tmp_path):
     stage.Save()
     Image.fromarray(np.zeros((H, W, 3), np.uint8)).save(tmp_path / "start.png")
     manifest = tmp_path / "resets.json"
-    manifest.write_text(json.dumps([{"image": "start.png", "state": READY, "prompt": "reach", "split": "train"}]))
+    manifest.write_text(json.dumps([{"image": "start.png", "state": START, "prompt": "reach", "split": "train"}]))
 
     CountingModel.chunks = []
     cfg = resolve_presets(FrankaReachEnvCfg())
@@ -95,8 +96,8 @@ def test_one_step_moves_the_arm_over_a_chunk_and_rewards_the_hand_through_forwar
     (targets,) = CountingModel.chunks
     delta = 0.5 * torch.cat((action[0], torch.zeros(2)))
     fractions = torch.arange(1, CHUNK + 1) / CHUNK
-    assert torch.allclose(targets[0], torch.tensor(READY) + fractions[:, None] * delta)
-    joint_pos = torch.tensor(READY) + delta
+    assert torch.allclose(targets[0], torch.tensor(START) + fractions[:, None] * delta)
+    joint_pos = torch.tensor(START) + delta
     assert torch.allclose(env.scene["robot"].data.joint_pos.torch[0], joint_pos)
     distance = torch.linalg.norm(tcp_position(joint_pos) - torch.tensor(GOAL))
     expected = -0.2 * distance + 0.1 * (1 - torch.tanh(distance / 0.1)) - 1e-4 * action.square().sum()
