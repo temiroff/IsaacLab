@@ -42,9 +42,12 @@ class CountingModel(WorldModel):
     def reset(self, env_ids, images, prompts, seeds):
         pass
 
-    def step(self, joint_targets, start_joint_state):
+    def write(self, name, value):
+        pass
+
+    def step(self):
         CountingModel.chunks += 1
-        return {"camera": torch.zeros(self.num_envs, CHUNK, H, W, 3, dtype=torch.uint8, device=self.device)}
+        return {"camera": {"rgb": torch.zeros(self.num_envs, CHUNK, H, W, 3, dtype=torch.uint8, device=self.device)}}
 
     def close(self):
         pass
@@ -76,7 +79,7 @@ def env(tmp_path):
     cfg.scene.robot.spawn = sim_utils.UsdFileCfg(usd_path=str(tmp_path / "franka.usda"))
     cfg.scene.camera.height, cfg.scene.camera.width = H, W
     cfg.sim.device = "cpu"
-    cfg.sim.physics.model = CountingModelCfg()
+    cfg.sim.physics.model_cfg = CountingModelCfg()
     cfg.sim.physics.reset_manifest = str(manifest)
     env = ManagerBasedRLEnv(cfg)
     yield env

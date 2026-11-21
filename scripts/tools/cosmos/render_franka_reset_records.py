@@ -7,7 +7,7 @@
 
 Each record is a start image of the task's camera, the Franka joint state the image shows and a prompt. The script
 poses the arm at sampled joint positions around its default pose, lets OvPhysX hold it there, renders the camera with
-OVRTX and writes the images and ``resets.json`` that ``WorldModelCfg.reset_manifest`` reads. It also checks the task's
+OVRTX and writes the images and ``resets.json`` that ``NeuralCfg.reset_manifest`` reads. It also checks the task's
 forward kinematics against the simulated hand.
 
 Usage:

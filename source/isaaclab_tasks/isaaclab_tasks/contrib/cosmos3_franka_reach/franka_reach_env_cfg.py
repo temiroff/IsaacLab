@@ -31,8 +31,8 @@ from isaaclab.sim.spawners.sensors.sensors_cfg import PinholeCameraCfg
 from isaaclab.utils import configclass, replace
 
 from isaaclab_neural.models.cosmos3 import Cosmos3Cfg
-from isaaclab_neural.physics import WorldModelCfg
-from isaaclab_neural.renderers import WorldModelRendererCfg
+from isaaclab_neural.physics import NeuralCfg
+from isaaclab_neural.renderers import NeuralRendererCfg
 
 from isaaclab_tasks.utils import PresetCfg
 
@@ -67,8 +67,8 @@ class FrankaReachPhysicsCfg(PresetCfg):
     checkpoint's causal history and samples with its fixed four-step schedule; it serves one environment.
     """
 
-    default: WorldModelCfg = WorldModelCfg(
-        model=Cosmos3Cfg(
+    default: NeuralCfg = NeuralCfg(
+        model_cfg=Cosmos3Cfg(
             domain_name="xdof_yam",
             joint_mapping=FrankaJointMappingCfg(
                 global_stats_path=(
@@ -106,7 +106,7 @@ class FrankaReachSceneCfg(InteractiveSceneCfg):
             rot=(0.0, math.sin(_CAMERA_PITCH / 2), 0.0, math.cos(_CAMERA_PITCH / 2)),
             convention="world",
         ),
-        renderer_cfg=WorldModelRendererCfg(),
+        renderer_cfg=NeuralRendererCfg(),
     )
 
 

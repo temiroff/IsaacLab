@@ -136,10 +136,10 @@ from the joints are exact; only the image is generated.
 
 | Piece | In the example | What it does |
 | --- | --- | --- |
-| World model | `Cosmos3Cfg(domain_name="xdof_yam")` in `WorldModelCfg(model=...)` | The model, here the Cosmos3 service. Any `WorldModel` fits (see "Add a world model"). |
+| World model | `Cosmos3Cfg(domain_name="xdof_yam")` in `NeuralCfg(model_cfg=...)` | The model, here the Cosmos3 service. Any `WorldModel` fits (see "Add a world model"). |
 | Joint mapping | `FrankaJointMappingCfg` | Converts a chunk of joint targets into the model's action space. Here: forward kinematics to hand poses relative to the chunk's start pose, plus finger width, as the right wrist of the checkpoint's `xdof_yam` domain, normalized with the statistics the checkpoint ships. |
 | Reset records | `assets/resets.json` and its PNGs | Start image, joint state and prompt of each episode start. `render_franka_reset_records.py` renders them with OvPhysX and OVRTX, without Kit. |
-| Camera | `CameraCfg(renderer_cfg=WorldModelRendererCfg(), frame_history_length=16)` | Shows the generated frames; placed where the start images were rendered from, at the model's 480 x 640. |
+| Camera | `CameraCfg(renderer_cfg=NeuralRendererCfg(), frame_history_length=16)` | Shows the generated frames; placed where the start images were rendered from, at the model's 480 x 640. |
 | Reward | `TcpGoalDistance` | Distance from the fingertips to a goal, from the forward kinematics of the joint state. |
 
 **Run it.** In the Cosmos Framework environment, download the checkpoint and start the service. The checkpoint is
@@ -175,8 +175,8 @@ uv run isaaclab play --rl_library rsl_rl --task Isaac-Cosmos3-Franka-Reach-v0 \
   camera shows the last frame of each generated chunk until the next chunk arrives (all 16 frames are in its frame
   history), so the video changes once per chunk. `--video_length 256` is 16 chunks, two episodes, so the video passes
   a reset to a new start image.
-* A service on another endpoint is selected with the override `env.sim.physics.model.endpoint=unix:///path` or
-  `env.sim.physics.model.endpoint=tcp://host:port`.
+* A service on another endpoint is selected with the override `env.sim.physics.model_cfg.endpoint=unix:///path` or
+  `env.sim.physics.model_cfg.endpoint=tcp://host:port`.
 
 **What to expect.** On an RTX PRO 6000, the first chunk takes about 14 s (the service opens its session) and each
 later chunk of 16 frames about 1 s. A short PPO run shows that the loop runs (start images, generated chunks, resets,
