@@ -550,6 +550,14 @@ def main(args: list[str] | None = None) -> None:
     parser.add_argument("--mode", choices=("window", "session"), default="window", help="Inference mode.")
     parser.add_argument("--device", default="cuda:0")
     parser.add_argument(
+        "--image-size",
+        type=int,
+        nargs=2,
+        default=Cosmos3Settings.image_size,
+        metavar=("HEIGHT", "WIDTH"),
+        help="Height and width of the start images and generated frames [pixels].",
+    )
+    parser.add_argument(
         "--endpoint",
         default=DEFAULT_WORLD_MODEL_ENDPOINT,
         help=f"unix:///path (same machine, owner-only) or tcp://host:port (default {DEFAULT_WORLD_MODEL_ENDPOINT}).",
@@ -561,6 +569,7 @@ def main(args: list[str] | None = None) -> None:
         config_file=options.config_file,
         output_dir=options.output_dir,
         mode=options.mode,
+        image_size=tuple(options.image_size),
     )
     serve(
         lambda: Cosmos3WorldModel(settings, options.device),
