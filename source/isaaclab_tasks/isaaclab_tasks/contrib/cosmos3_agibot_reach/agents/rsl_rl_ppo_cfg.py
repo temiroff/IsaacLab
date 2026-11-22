@@ -9,7 +9,7 @@ from isaaclab.utils import configclass
 
 from isaaclab_rl.rsl_rl import RslRlCNNModelCfg, RslRlOnPolicyRunnerCfg, RslRlPpoAlgorithmCfg
 
-# Global average pooling keeps the latent small at the model's 480 x 640 frames.
+# Global average pooling keeps the latent small at the model's 352 x 640 frames.
 CNN_CFG = RslRlCNNModelCfg.CNNCfg(
     output_channels=[16, 32, 64],
     kernel_size=[8, 4, 3],
@@ -20,14 +20,14 @@ CNN_CFG = RslRlCNNModelCfg.CNNCfg(
 
 
 @configclass
-class FrankaReachPPORunnerCfg(RslRlOnPolicyRunnerCfg):
+class AgibotReachPPORunnerCfg(RslRlOnPolicyRunnerCfg):
     """Actor and critic both see the image and the joint positions."""
 
     # One episode of 8 chunks per rollout.
     num_steps_per_env = 8
     max_iterations = 1000
     save_interval = 50
-    experiment_name = "cosmos3_franka_reach"
+    experiment_name = "cosmos3_agibot_reach"
     obs_groups = {"actor": ["policy", "image"], "critic": ["policy", "image"]}
     actor = RslRlCNNModelCfg(
         obs_normalization=True,

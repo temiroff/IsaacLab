@@ -3,7 +3,7 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
-"""Action and reward of the world-model Franka reach task, from the joint state alone."""
+"""Action and reward of the world-model AgiBot reach task, from the joint state alone."""
 
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ import torch
 from isaaclab.envs.mdp import JointPositionAction
 from isaaclab.managers import ManagerTermBase, RewardTermCfg, SceneEntityCfg
 
-from .franka_mapping import tcp_position
+from .agibot_mapping import tcp_positions
 
 if TYPE_CHECKING:
     from isaaclab.envs import ManagerBasedRLEnv
@@ -36,11 +36,11 @@ class ResetPoseJointPositionAction(JointPositionAction):
 
 
 class TcpGoalDistance(ManagerTermBase):
-    """Distance from the point between the Franka fingertips to a goal in the robot's base frame [m].
+    """Distance from the point between one gripper's fingertips to a goal in the robot's base frame [m].
 
     The world model supplies no body poses, so the fingertips come from the forward kinematics of the joint state,
-    on the device. With ``std``, the term is ``1 - tanh(distance / std)`` instead, as the reach task's fine-grained
-    tracking reward.
+    on the device. ``arm`` is 0 for the left gripper and 1 for the right one. With ``std``, the term is
+    ``1 - tanh(distance / std)`` instead, as the reach task's fine-grained tracking reward.
     """
 
     def __init__(self, cfg: RewardTermCfg, env: ManagerBasedRLEnv):
@@ -52,8 +52,10 @@ class TcpGoalDistance(ManagerTermBase):
         self,
         env: ManagerBasedRLEnv,
         goal: tuple[float, float, float],
+        arm: int,
         std: float | None = None,
         asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
     ) -> torch.Tensor:
-        distance = torch.linalg.norm(tcp_position(self._asset.data.joint_pos.torch) - self._goal, dim=-1)
+        tcp = tcp_positions(self._asset.data.joint_pos.torch)[:, arm]
+        distance = torch.linalg.norm(tcp - self._goal, dim=-1)
         return distance if std is None else 1.0 - torch.tanh(distance / std)

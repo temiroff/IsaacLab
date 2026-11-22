@@ -41,4 +41,4 @@ include = ["isaaclab_tasks", "isaaclab_tasks.*"]
 
 [tool.setuptools.package-data]
 "*" = ["*.pyi"]
-"isaaclab_tasks.contrib.cosmos3_franka_reach" = ["assets/*.json", "assets/*.png"]
+"isaaclab_tasks.contrib.cosmos3_agibot_reach" = ["assets/*.json", "assets/*.png"]

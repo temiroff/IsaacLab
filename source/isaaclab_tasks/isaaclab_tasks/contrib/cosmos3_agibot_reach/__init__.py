@@ -3,18 +3,18 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
-"""Franka reach with the public Cosmos3 Sim-Bimanual checkpoint as physics and renderer."""
+"""AgiBot A2D bimanual reach with the public Cosmos3 Sim-Bimanual checkpoint as physics and renderer."""
 
 import gymnasium as gym
 
 from . import agents
 
 gym.register(
-    id="Isaac-Cosmos3-Franka-Reach-v0",
+    id="Isaac-Cosmos3-AgiBot-Reach-v0",
     entry_point="isaaclab.envs:ManagerBasedRLEnv",
     disable_env_checker=True,
     kwargs={
-        "env_cfg_entry_point": f"{__name__}.franka_reach_env_cfg:FrankaReachEnvCfg",
-        "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_ppo_cfg:FrankaReachPPORunnerCfg",
+        "env_cfg_entry_point": f"{__name__}.agibot_reach_env_cfg:AgibotReachEnvCfg",
+        "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_ppo_cfg:AgibotReachPPORunnerCfg",
     },
 )

@@ -125,14 +125,15 @@ serves one. With the service on the same machine and a GPU this process can acce
 (CUDA IPC, Linux); otherwise they go through the socket, which carries about 16 environments of 16 frames at
 480 x 640 per message. `Cosmos3Cfg.transport` forces either one.
 
-### Example: Franka reach on a public checkpoint
+### Example: AgiBot reach on a public checkpoint
 
-`Isaac-Cosmos3-Franka-Reach-v0` shows the whole workflow with public weights only, the
+`Isaac-Cosmos3-AgiBot-Reach-v0` shows the whole workflow with public weights only, the
 [`nvidia/Cosmos3-Nano-Sim-Bimanual`](https://huggingface.co/nvidia/Cosmos3-Nano-Sim-Bimanual) checkpoint, and no
-Isaac Sim or Kit at any step.
+Isaac Sim or Kit at any step. The robot is Isaac Lab's AgiBot A2D, the robot of the checkpoint's `agibotworld` domain,
+seen from its head camera.
 
 **What the world model replaces, and what stays Isaac Lab.** The world model is the physics and the camera: from the
-start image and the arm's joint targets it predicts the next 16 camera frames. Everything else is an ordinary
+start image and both arms' joint targets it predicts the next 16 camera frames. Everything else is an ordinary
 manager-based task: the scene, the joint-position actions, the observations, the reward and terminations, the policy and
 PPO training with `rsl_rl`. The joint state comes from the joint targets, so joint observations and a reward computed
 from the joints are exact; only the image is generated.
@@ -141,16 +142,16 @@ from the joints are exact; only the image is generated.
 
 | Piece | In the example | What it does |
 | --- | --- | --- |
-| World model | `Cosmos3Cfg(domain_name="xdof_yam")` in `NeuralCfg(model_cfg=...)` | The model, here the Cosmos3 service. Any `WorldModel` fits (see "Add a world model"). |
-| Actions | `JointPositionActionCfg(chunk_length=16, interpolate=True)` | One environment step is one chunk: the policy sets the 7 arm joint targets once per chunk, around the reset record's pose, and the arm reaches them in 16 equal increments. The task's `ResetPoseJointPositionAction` reads that pose again at every reset; `JointPositionAction` would keep the Franka's initial pose. `env.actions.arm.interpolate=false` lets the policy set all 16 targets (112 numbers). |
-| Joint mapping | `FrankaJointMappingCfg` | Converts a chunk of joint targets into the model's action space. Here: forward kinematics to hand poses relative to the chunk's start pose, plus finger width, as the right wrist of the checkpoint's `xdof_yam` domain, normalized with the statistics the checkpoint ships. |
-| Reset records | `assets/resets.json` and its PNGs | Start image, joint state and prompt of each episode start. `render_franka_reset_records.py` renders them with OvPhysX and OVRTX, without Kit. |
-| Camera | `CameraCfg(renderer_cfg=NeuralRendererCfg(), frame_history_length=16)` | Shows the generated frames; placed where the start images were rendered from, at the model's 480 x 640. |
-| Reward | `TcpGoalDistance` | Distance from the fingertips to a goal, from the forward kinematics of the joint state. |
+| World model | `Cosmos3Cfg(domain_name="agibotworld")` in `NeuralCfg(model_cfg=...)` | The model, here the Cosmos3 service. Any `WorldModel` fits (see "Add a world model"). |
+| Actions | `JointPositionActionCfg(chunk_length=16, interpolate=True)` | One environment step is one chunk: the policy sets the 14 arm joint targets once per chunk, around the reset record's pose, and the arms reach them in 16 equal increments. The task's `ResetPoseJointPositionAction` reads that pose again at every reset; `JointPositionAction` would keep the A2D's initial pose. `env.actions.arms.interpolate=false` lets the policy set all 16 targets (224 numbers). |
+| Joint mapping | `AgibotJointMappingCfg` | Converts a chunk of joint targets into the model's action space. Here: forward kinematics to each gripper's pose relative to the chunk's start pose, plus its opening, as the two wrists of the checkpoint's `agibotworld` domain, normalized with the statistics the checkpoint ships. |
+| Reset records | `assets/resets.json` and its PNGs | Start image, joint state and prompt of each episode start. `render_agibot_reset_records.py` renders them with OvPhysX and OVRTX, without Kit, and checks the mapping's forward kinematics against the simulated grippers. |
+| Camera | `CameraCfg(renderer_cfg=NeuralRendererCfg(), frame_history_length=16)` | Shows the generated frames; placed where the AgiBot World head camera is and where the start images were rendered from, at 352 x 640. |
+| Reward | `TcpGoalDistance` | Distance from each gripper's fingertips to its goal, from the forward kinematics of the joint state. |
 
-**Run it.** In the Cosmos Framework environment, download the checkpoint and start the service. The checkpoint is
-distilled to a fixed four-step schedule, which the service samples in `--mode session`; session mode serves one
-environment.
+**Run it.** In the Cosmos Framework environment, download the checkpoint and start the service at the task's image
+size. The checkpoint is distilled to a fixed four-step schedule, which the service samples in `--mode session`;
+session mode serves one environment.
 
 ```bash
 cd "$ISAAC_LAB_ROOT"
@@ -158,20 +159,20 @@ uv run --project "$COSMOS_FRAMEWORK_ROOT" --no-sync hf download nvidia/Cosmos3-N
     --local-dir .pretrained_checkpoints/Cosmos3-Nano-Sim-Bimanual
 export LD_LIBRARY_PATH=
 uv run --project "$COSMOS_FRAMEWORK_ROOT" --no-sync isaaclab-cosmos-world-model-server \
-    --checkpoint .pretrained_checkpoints/Cosmos3-Nano-Sim-Bimanual --mode session
+    --checkpoint .pretrained_checkpoints/Cosmos3-Nano-Sim-Bimanual --mode session --image-size 352 640
 ```
 
 Then, in the Isaac Lab environment:
 
 ```bash
 uv sync --extra ov --extra rsl-rl --extra video
-# Optional: render new start images (the task includes a set). OvPhysX poses the arm and OVRTX renders the camera.
-uv run python scripts/tools/cosmos/render_franka_reset_records.py
+# Optional: render new start images (the task includes a set). OvPhysX poses the A2D and OVRTX renders the camera.
+uv run python scripts/tools/cosmos/render_agibot_reset_records.py
 # Train with PPO and record the task's camera.
-uv run isaaclab train --rl_library rsl_rl --task Isaac-Cosmos3-Franka-Reach-v0 --max_iterations 10 \
+uv run isaaclab train --rl_library rsl_rl --task Isaac-Cosmos3-AgiBot-Reach-v0 --max_iterations 10 \
     --video sensor:camera --video_length 16
 # Run the trained policy (the latest checkpoint of the experiment) and record it.
-uv run isaaclab play --rl_library rsl_rl --task Isaac-Cosmos3-Franka-Reach-v0 \
+uv run isaaclab play --rl_library rsl_rl --task Isaac-Cosmos3-AgiBot-Reach-v0 \
     --video sensor:camera --video_length 16
 ```
 
@@ -184,40 +185,28 @@ uv run isaaclab play --rl_library rsl_rl --task Isaac-Cosmos3-Franka-Reach-v0 \
 * A service on another endpoint is selected with the override `env.sim.physics.model_cfg.endpoint=unix:///path` or
   `env.sim.physics.model_cfg.endpoint=tcp://host:port`.
 
-**What to expect.** On an RTX PRO 6000, the first chunk takes about 14 s (the service opens its session) and each
-later chunk of 16 frames about 1 s. A short PPO run shows that the loop runs (start images, generated chunks, resets,
-updates); it does not produce a useful policy.
+**What to expect.** On an RTX PRO 6000, each chunk of 16 frames takes about 0.8 s once the service has opened its
+session, and a PPO iteration (one episode of 8 chunks) about 7 s. With scripted joint targets that move both grippers
+to their goals, the generated grippers follow their paths and the A2D keeps its shape; the model gives the arms the
+silver forearms of the AgiBot World robots as they come into view. A short PPO run shows that the loop runs (start
+images, generated chunks, resets, updates); it does not produce a useful policy.
 
-#### What needs fine-tuning
+#### What a model needs from the robot
 
 **What Cosmos3 gets per chunk.** One image (the start image at a reset, then its own last frame), 16 actions (one
 per frame), the prompt and a seed. It returns 16 frames and no joint state.
 
 **How joints become actions.** The public checkpoint accepts only the action format it was trained on: per arm, a
-hand pose and a gripper opening (`unified_v1`, 59 numbers). It has no input for joint angles. The task's joint mapping
-therefore converts the Franka's 7 arm joint targets with forward kinematics into a hand pose relative to the start of
-the chunk, and the finger width into the gripper opening. It is a direct translation, with no other logic.
+gripper pose and opening (`unified_v1`, 59 numbers). It has no input for joint angles. The task's joint mapping
+therefore converts each arm's 7 joint targets with forward kinematics into a gripper pose relative to the start of
+the chunk. It is a direct translation, with no other logic. The forward kinematics and the camera follow the AgiBot
+World G1 description the checkpoint's data was recorded with, so the actions mean what they meant in training.
 
-**What is lost.** 7 joints become a 6-number hand pose, so the model is not told where the elbow is and has to guess
-the rest of the arm.
-
-**What you see.** The model was trained on AgiBot, YAM and BEHAVIOR-1K arms and never saw a Franka. The first frame
-is the rendered Franka; later frames can shorten or bend the arm or detach the gripper. In a 10-iteration PPO run,
-after the first chunk the arm turned into a shorter arm near the bottom edge and a detached copy of the gripper stayed
-on the table for the rest of the episode; after the reset, the next episode kept the arm recognizable.
-
-**The fix is fine-tuning.**
-
-1. Fine-tune Cosmos3 on videos of your robot recorded with its joint actions, so that it learns a joint-space action
-   format for that robot (for a Franka: 7 joints and the gripper to video).
-2. Replace the task's joint mapping with one that passes the joints through unchanged.
-
-Nothing else in Isaac Lab changes: the task, the reward, PPO and the commands stay the same. A reward or termination
-judged from images, such as a classifier, would also need tuning on generated frames; this task's reward reads the
-joint state and stays exact.
-
-**Other robots.** The same holds for any robot outside the trained format. A Shadow Hand's finger joints cannot be
-expressed as a hand pose and a gripper opening, so it needs a model trained on hand poses or fine-tuned on that hand.
+**Other robots.** A robot the checkpoint never saw, such as a Franka, keeps its first frame and then drifts: the model
+shortens or bends the arm or detaches the gripper. A robot outside the trained format, such as a Shadow Hand, cannot
+be expressed as a gripper pose and opening at all. Both need Cosmos3 fine-tuned on videos of that robot recorded with
+its joint actions, and a joint mapping that passes the joints through unchanged. Nothing else in Isaac Lab changes: the
+task, the reward, PPO and the commands stay the same.
 
 ## Tests
 

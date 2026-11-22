@@ -1,0 +1,117 @@
+[
+  {
+    "image": "train_00.png",
+    "state": [
+      -1.0362861156463623,
+      0.5140037536621094,
+      0.14247912168502808,
+      -1.0019761323928833,
+      0.8637562990188599,
+      1.327019453048706,
+      -0.2454957664012909,
+      1.844077229499817,
+      -0.8162870407104492,
+      -1.447122573852539,
+      0.6995010375976562,
+      -0.26143330335617065,
+      -1.2712336778640747,
+      -0.038979753851890564,
+      0.7083333730697632,
+      0.7083333134651184
+    ],
+    "prompt": "The scene opens in an overhead-oblique, landscape tabletop shot from the robot's head camera with sharp focus, framing a light wood-grain work surface that fills most of the image while both robotic arms are cropped by the side edges. A pale gray and off-white checkered floor with small green markers extends beyond the far edge of the table. Slightly right of center, a turquoise plastic bottle-like block stands upright; left of it lies a flat blue-and-white packet, a small brown cardboard box sits in the right part of the table and a small red box rests near the upper-left tabletop. The left robotic arm is black with articulated linkages and a two-pronged black gripper; only its gripper and part of its wrist are visible at the left edge. The right robotic arm is black with black mounting blocks and an articulated two-pronged gripper; it is cropped by the right edge and faces inward toward the central objects. The bottle-like block is the tallest tabletop object and the packet lies flat; the left arm is nearest the camera along the left foreground edge, while the right arm is on the right side. Bright diffuse indoor lighting creates warm highlights on the tan wood and soft shadows from the arms and objects, with a palette of warm wood, turquoise, blue-white packaging, brown cardboard, red, black hardware and pale gray tile, giving the setup a controlled, technical demonstration quality. Both grippers move smoothly forward and down over the table.",
+    "split": "train"
+  },
+  {
+    "image": "train_01.png",
+    "state": [
+      -0.8643276691436768,
+      0.5962908267974854,
+      0.275712251663208,
+      -1.184999942779541,
+      0.6803438663482666,
+      1.2014822959899902,
+      -0.14080476760864258,
+      1.7901458740234375,
+      -0.8519216179847717,
+      -1.6121934652328491,
+      0.7256472110748291,
+      -0.1227545514702797,
+      -1.2112233638763428,
+      -0.18921226263046265,
+      0.7083332538604736,
+      0.7083331346511841
+    ],
+    "prompt": "The scene opens in an overhead-oblique, landscape tabletop shot from the robot's head camera with sharp focus, framing a light wood-grain work surface that fills most of the image while both robotic arms are cropped by the side edges. A pale gray and off-white checkered floor with small green markers extends beyond the far edge of the table. Slightly right of center, a turquoise plastic bottle-like block stands upright; left of it lies a flat blue-and-white packet, a small brown cardboard box sits in the right part of the table and a small red box rests near the upper-left tabletop. The left robotic arm is black with articulated linkages and a two-pronged black gripper; only its gripper and part of its wrist are visible at the left edge. The right robotic arm is black with black mounting blocks and an articulated two-pronged gripper; it is cropped by the right edge and faces inward toward the central objects. The bottle-like block is the tallest tabletop object and the packet lies flat; the left arm is nearest the camera along the left foreground edge, while the right arm is on the right side. Bright diffuse indoor lighting creates warm highlights on the tan wood and soft shadows from the arms and objects, with a palette of warm wood, turquoise, blue-white packaging, brown cardboard, red, black hardware and pale gray tile, giving the setup a controlled, technical demonstration quality. Both grippers move smoothly forward and down over the table.",
+    "split": "train"
+  },
+  {
+    "image": "train_02.png",
+    "state": [
+      -1.1501652002334595,
+      0.5910041332244873,
+      0.3945144712924957,
+      -1.0410926342010498,
+      0.7799683213233948,
+      1.1975758075714111,
+      -0.26089152693748474,
+      1.7684202194213867,
+      -0.805905282497406,
+      -1.5015618801116943,
+      0.6701393127441406,
+      -0.049712762236595154,
+      -1.3524760007858276,
+      -0.05756577104330063,
+      0.7083333134651184,
+      0.7083333134651184
+    ],
+    "prompt": "The scene opens in an overhead-oblique, landscape tabletop shot from the robot's head camera with sharp focus, framing a light wood-grain work surface that fills most of the image while both robotic arms are cropped by the side edges. A pale gray and off-white checkered floor with small green markers extends beyond the far edge of the table. Slightly right of center, a turquoise plastic bottle-like block stands upright; left of it lies a flat blue-and-white packet, a small brown cardboard box sits in the right part of the table and a small red box rests near the upper-left tabletop. The left robotic arm is black with articulated linkages and a two-pronged black gripper; only its gripper and part of its wrist are visible at the left edge. The right robotic arm is black with black mounting blocks and an articulated two-pronged gripper; it is cropped by the right edge and faces inward toward the central objects. The bottle-like block is the tallest tabletop object and the packet lies flat; the left arm is nearest the camera along the left foreground edge, while the right arm is on the right side. Bright diffuse indoor lighting creates warm highlights on the tan wood and soft shadows from the arms and objects, with a palette of warm wood, turquoise, blue-white packaging, brown cardboard, red, black hardware and pale gray tile, giving the setup a controlled, technical demonstration quality. Both grippers move smoothly forward and down over the table.",
+    "split": "train"
+  },
+  {
+    "image": "train_03.png",
+    "state": [
+      -0.9197899699211121,
+      0.39932170510292053,
+      0.20068775117397308,
+      -1.0382118225097656,
+      0.789069414138794,
+      1.3071296215057373,
+      -0.3001735806465149,
+      1.8688485622406006,
+      -0.7680006623268127,
+      -1.5346890687942505,
+      0.8143625855445862,
+      -0.21411317586898804,
+      -1.124459147453308,
+      -0.18016745150089264,
+      0.7083337903022766,
+      0.7083327770233154
+    ],
+    "prompt": "The scene opens in an overhead-oblique, landscape tabletop shot from the robot's head camera with sharp focus, framing a light wood-grain work surface that fills most of the image while both robotic arms are cropped by the side edges. A pale gray and off-white checkered floor with small green markers extends beyond the far edge of the table. Slightly right of center, a turquoise plastic bottle-like block stands upright; left of it lies a flat blue-and-white packet, a small brown cardboard box sits in the right part of the table and a small red box rests near the upper-left tabletop. The left robotic arm is black with articulated linkages and a two-pronged black gripper; only its gripper and part of its wrist are visible at the left edge. The right robotic arm is black with black mounting blocks and an articulated two-pronged gripper; it is cropped by the right edge and faces inward toward the central objects. The bottle-like block is the tallest tabletop object and the packet lies flat; the left arm is nearest the camera along the left foreground edge, while the right arm is on the right side. Bright diffuse indoor lighting creates warm highlights on the tan wood and soft shadows from the arms and objects, with a palette of warm wood, turquoise, blue-white packaging, brown cardboard, red, black hardware and pale gray tile, giving the setup a controlled, technical demonstration quality. Both grippers move smoothly forward and down over the table.",
+    "split": "train"
+  },
+  {
+    "image": "validation_00.png",
+    "state": [
+      -0.8756392002105713,
+      0.6052170991897583,
+      0.1399288773536682,
+      -1.227327585220337,
+      0.8684709072113037,
+      1.1010794639587402,
+      -0.22451582551002502,
+      1.8325124979019165,
+      -0.7448186874389648,
+      -1.6188632249832153,
+      0.6962106823921204,
+      -0.029966741800308228,
+      -1.3140618801116943,
+      -0.18848742544651031,
+      0.7083332538604736,
+      0.7083331942558289
+    ],
+    "prompt": "The scene opens in an overhead-oblique, landscape tabletop shot from the robot's head camera with sharp focus, framing a light wood-grain work surface that fills most of the image while both robotic arms are cropped by the side edges. A pale gray and off-white checkered floor with small green markers extends beyond the far edge of the table. Slightly right of center, a turquoise plastic bottle-like block stands upright; left of it lies a flat blue-and-white packet, a small brown cardboard box sits in the right part of the table and a small red box rests near the upper-left tabletop. The left robotic arm is black with articulated linkages and a two-pronged black gripper; only its gripper and part of its wrist are visible at the left edge. The right robotic arm is black with black mounting blocks and an articulated two-pronged gripper; it is cropped by the right edge and faces inward toward the central objects. The bottle-like block is the tallest tabletop object and the packet lies flat; the left arm is nearest the camera along the left foreground edge, while the right arm is on the right side. Bright diffuse indoor lighting creates warm highlights on the tan wood and soft shadows from the arms and objects, with a palette of warm wood, turquoise, blue-white packaging, brown cardboard, red, black hardware and pale gray tile, giving the setup a controlled, technical demonstration quality. Both grippers move smoothly forward and down over the table.",
+    "split": "validation"
+  }
+]
