@@ -149,8 +149,8 @@ from the joints are exact; only the image is generated.
 | Camera | `CameraCfg(renderer_cfg=NeuralRendererCfg(), frame_history_length=16)` | Shows the generated frames; placed where the AgiBot World head camera is and where the start images were rendered from, at 352 x 640. |
 | Reward | `TcpGoalDistance` | Distance from each gripper's fingertips to its goal, from the forward kinematics of the joint state. |
 
-**Run it.** In the Cosmos Framework environment, download the checkpoint and start the service at the task's image
-size. The checkpoint is distilled to a fixed four-step schedule, which the service samples in `--mode session`;
+**Run it.** In the Cosmos Framework environment, with the Cosmos service package of this checkout installed as above,
+download the checkpoint and start the service at the task's image size. The checkpoint is distilled to a fixed four-step schedule, which the service samples in `--mode session`;
 session mode serves one environment.
 
 ```bash
@@ -166,11 +166,11 @@ Then, in the Isaac Lab environment:
 
 ```bash
 uv sync --extra ov --extra rsl-rl --extra video
-# Optional: render new start images (the task includes a set). OvPhysX poses the A2D and OVRTX renders the camera.
+# Optional: render the start images again, over the task's set. OvPhysX poses the A2D and OVRTX renders the camera.
 uv run python scripts/tools/cosmos/render_agibot_reset_records.py
-# Train with PPO and record the task's camera.
-uv run isaaclab train --rl_library rsl_rl --task Isaac-Cosmos3-AgiBot-Reach-v0 --max_iterations 10 \
-    --video sensor:camera --video_length 16
+# Train with PPO and record the task's camera every 50 iterations.
+uv run isaaclab train --rl_library rsl_rl --task Isaac-Cosmos3-AgiBot-Reach-v0 --max_iterations 500 \
+    --video sensor:camera --video_length 16 --video_interval 400
 # Run the trained policy (the latest checkpoint of the experiment) and record it.
 uv run isaaclab play --rl_library rsl_rl --task Isaac-Cosmos3-AgiBot-Reach-v0 \
     --video sensor:camera --video_length 16
@@ -181,15 +181,16 @@ uv run isaaclab play --rl_library rsl_rl --task Isaac-Cosmos3-AgiBot-Reach-v0 \
 * `--video sensor:camera` records the task's camera, which is the image the policy sees. No viewer is started. The
   camera shows the last frame of each generated chunk (all 16 frames are in its frame history), so the video has
   one frame per step, per chunk. `--video_length 16` is 16 chunks, two episodes, so the video passes a reset to a new
-  start image.
+  start image. An iteration is 8 steps, so `--video_interval 400` records a clip every 50 iterations.
 * A service on another endpoint is selected with the override `env.sim.physics.model_cfg.endpoint=unix:///path` or
   `env.sim.physics.model_cfg.endpoint=tcp://host:port`.
 
 **What to expect.** On an RTX PRO 6000, each chunk of 16 frames takes about 0.8 s once the service has opened its
 session, and a PPO iteration (one episode of 8 chunks) about 7 s. With scripted joint targets that move both grippers
 to their goals, the generated grippers follow their paths and the A2D keeps its shape; the model gives the arms the
-silver forearms of the AgiBot World robots as they come into view. A short PPO run shows that the loop runs (start
-images, generated chunks, resets, updates); it does not produce a useful policy.
+silver forearms of the AgiBot World robots as they come into view. The 500 PPO iterations take about an hour; over
+them the grippers' final distance to their goals falls from about 17 cm to about 8 cm, and the trained policy reaches
+within 3 cm from some start images. Objects the grippers pass over can change shape in the generated frames.
 
 #### What a model needs from the robot
 
