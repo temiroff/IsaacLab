@@ -226,8 +226,24 @@ class ActionManager(ManagerBase):
         # call the base class constructor (this prepares the terms)
         super().__init__(cfg, env)
         self._graphable = True
+        # a term with a chunk takes ``chunk_length`` commands per action, each ``term.action_dim`` long
+        self._chunk_length = [term.cfg.chunk_length for term in self._terms.values()]
+        if any(length != 1 for length in self._chunk_length):
+            decimation = env.cfg.decimation
+            for name, length in zip(self._terms, self._chunk_length):
+                if not isinstance(length, int) or length < 1 or decimation % length:
+                    raise ValueError(
+                        f"Action term '{name}': chunk_length must be a positive divisor of the environment step's"
+                        f" {decimation} physics steps (decimation), so that each command holds for the same number"
+                        f" of steps; got {length}."
+                    )
+            self._decimation = decimation
+        # the physics step of the environment step that the next apply_action is for
+        self._physics_step = 0
         # fixed once the terms are built
-        self._action_term_dim = [term.action_dim for term in self._terms.values()]
+        self._action_term_dim = [
+            term.action_dim * length for term, length in zip(self._terms.values(), self._chunk_length)
+        ]
         self._total_action_dim = sum(self._action_term_dim)
         # create buffers to store actions
         self._action = torch.zeros((self.num_envs, self.total_action_dim), device=self.device)
@@ -291,10 +307,15 @@ class ActionManager(ManagerBase):
     def is_graphable(self) -> bool:
         """Whether :meth:`apply_action` can be recorded into a CUDA graph.
 
-        True when all terms are. Set it to False before the environment's first step to keep :meth:`apply_action` in
-        the environment's loop, for example when wrapping it in Python.
+        True when all terms are and no term has a chunk, whose commands are processed between physics steps. Set it to
+        False before the environment's first step to keep :meth:`apply_action` in the environment's loop, for example
+        when wrapping it in Python.
         """
-        return self._graphable and all(term.is_graphable for term in self._terms.values())
+        return (
+            self._graphable
+            and all(length == 1 for length in self._chunk_length)
+            and all(term.is_graphable for term in self._terms.values())
+        )
 
     @is_graphable.setter
     def is_graphable(self, value: bool):
@@ -367,10 +388,10 @@ class ActionManager(ManagerBase):
         """
         terms = []
         idx = 0
-        for name, term in self._terms.items():
-            term_actions = self._action[env_idx, idx : idx + term.action_dim].cpu()
+        for (name, _), dim in zip(self._terms.items(), self._action_term_dim):
+            term_actions = self._action[env_idx, idx : idx + dim].cpu()
             terms.append((name, term_actions.tolist()))
-            idx += term.action_dim
+            idx += dim
         return terms
 
     def set_debug_vis(self, debug_vis: bool):
@@ -416,21 +437,32 @@ class ActionManager(ManagerBase):
         self._prev_action[:] = self._action
         self._action[:] = action.to(self.device)
 
-        # split the actions and apply to each tensor
+        # split the actions and apply to each tensor; a chunk starts with its first command
+        self._physics_step = 0
         idx = 0
-        for term in self._terms.values():
-            term_actions = action[:, idx : idx + term.action_dim]
-            term.process_actions(term_actions)
-            idx += term.action_dim
+        for term, length in zip(self._terms.values(), self._chunk_length):
+            term.process_actions(action[:, idx : idx + term.action_dim])
+            idx += term.action_dim * length
 
     def apply_action(self) -> None:
         """Applies the actions to the environment/simulation.
 
         Note:
-            This should be called at every simulation step.
+            This should be called at every simulation step. A term with a chunk processes its next command here, at
+            the physics step where that command starts.
         """
+        if self._physics_step:
+            idx = 0
+            for term, length in zip(self._terms.values(), self._chunk_length):
+                hold = self._decimation // length if length != 1 else 0
+                command = self._physics_step // hold if hold else 0
+                if hold and self._physics_step % hold == 0 and command < length:
+                    start = idx + term.action_dim * command
+                    term.process_actions(self._action[:, start : start + term.action_dim])
+                idx += term.action_dim * length
         for term in self._terms.values():
             term.apply_actions()
+        self._physics_step += 1
 
     def get_term(self, name: str) -> ActionTerm:
         """Returns the action term with the specified name.

@@ -108,6 +108,11 @@ class ActionTermCfg:
     (:attr:`action_names`) for task-space and non-holonomic action terms.
     """
 
+    chunk_length: int = 1
+    """Number of commands of this term in one action, applied in order over the physics steps of the environment
+    step, each for ``decimation / chunk_length`` steps. It must divide ``decimation``. Defaults to 1, one command for
+    the whole environment step."""
+
 
 ##
 # Command manager.
